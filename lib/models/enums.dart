@@ -1,4 +1,6 @@
 // Enumerações centrais do app Prospera.
+// NOTA: O conceito de "Naturaleza" (Fijo/Variable) foi removido do produto
+// por decisão de UX (não agregava valor à tomada de decisão do usuário).
 
 enum TxType { ingreso, gasto, inversion, deuda }
 
@@ -25,19 +27,6 @@ extension TxTypeX on TxType {
 
   bool get isOutflow => this == TxType.gasto || this == TxType.deuda;
   bool get isInflow => this == TxType.ingreso;
-}
-
-enum TxNature { fijo, variable }
-
-extension TxNatureX on TxNature {
-  String get label => this == TxNature.fijo ? 'Fijo' : 'Variable';
-
-  static TxNature fromString(String s) {
-    return TxNature.values.firstWhere(
-      (e) => e.name == s,
-      orElse: () => TxNature.variable,
-    );
-  }
 }
 
 enum TxStatus { pagado, pendiente }
@@ -103,6 +92,34 @@ extension PriorityX on Priority {
     return Priority.values.firstWhere(
       (e) => e.name == s,
       orElse: () => Priority.media,
+    );
+  }
+}
+
+/// Nível de "controlabilidade" de um gasto — classificação interna usada
+/// pelo motor de inteligência para gerar recomendações. Nunca é exposta
+/// diretamente ao usuário como conceito, apenas através das mensagens.
+enum Controllability { controlable, semiControlable, pocoControlable }
+
+/// Papel de um colaborador com acesso à base de dados compartilhada.
+enum ShareRole { propietario, editor, visualizador }
+
+extension ShareRoleX on ShareRole {
+  String get label {
+    switch (this) {
+      case ShareRole.propietario:
+        return 'Propietario';
+      case ShareRole.editor:
+        return 'Editor';
+      case ShareRole.visualizador:
+        return 'Visualizador';
+    }
+  }
+
+  static ShareRole fromString(String s) {
+    return ShareRole.values.firstWhere(
+      (e) => e.name == s,
+      orElse: () => ShareRole.visualizador,
     );
   }
 }

@@ -7,6 +7,9 @@ class AppColors {
   static const inversion = Color(0xFF448AFF);
   static const deuda = Color(0xFFFF8A65);
   static const warning = Color(0xFFFFB300);
+  /// Usado nas barras de progresso de KPIs na faixa 90%–100% (laranja),
+  /// distinto de [deuda] para não confundir com a cor de dívidas.
+  static const naranja = Color(0xFFFF7A1A);
   static const alertaAlta = Color(0xFFFF5252);
   static const alertaMedia = Color(0xFFFFB300);
   static const alertaBaja = Color(0xFF448AFF);

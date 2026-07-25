@@ -189,7 +189,6 @@ class _TxnTile extends StatelessWidget {
         ),
         onLongPress: () => _showActions(context),
         child: Container(
-          padding: const EdgeInsets.all(AppSpacing.md),
           decoration: BoxDecoration(
             color: Theme.of(context).cardTheme.color,
             borderRadius: BorderRadius.circular(12),
@@ -199,51 +198,69 @@ class _TxnTile extends StatelessWidget {
           ),
           child: Row(
             children: [
-              CategoryIcon(iconKey: iconKey, color: color, size: 40),
-              const SizedBox(width: AppSpacing.md),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      txn.description.isNotEmpty
-                          ? txn.description
-                          : '${txn.category} · ${txn.subcategory}',
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w600,
-                        fontSize: 13.5,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      '${txn.category} · ${txn.subcategory} · ${formatDayMonth(txn.date)} · ${txn.country}',
-                      style: TextStyle(
-                        fontSize: 11.5,
-                        color: Theme.of(context).textTheme.bodySmall?.color,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
+              // Franja de color a la izquierda: identifica el tipo de
+              // movimiento (ingreso/gasto/deuda/inversión) de un vistazo,
+              // sin tener que leer texto.
+              Container(
+                width: 4,
+                height: 56,
+                decoration: BoxDecoration(
+                  color: color,
+                  borderRadius: const BorderRadius.horizontal(
+                    left: Radius.circular(12),
+                  ),
                 ),
               ),
-              const SizedBox(width: AppSpacing.sm),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Text(
-                    '${txn.type.isInflow ? '+' : '-'}${formatUsd(txn.amount)}',
-                    style: TextStyle(
-                      color: color,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 13.5,
-                    ),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.all(AppSpacing.md),
+                  child: Row(
+                    children: [
+                      CategoryIcon(iconKey: iconKey, color: color, size: 40),
+                      const SizedBox(width: AppSpacing.md),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              txn.description.isNotEmpty
+                                  ? txn.description
+                                  : '${txn.category} · ${txn.subcategory}',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                                fontSize: 13.5,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              '${txn.category} · ${txn.subcategory} · ${formatDayMonth(txn.date)} · ${txn.country}',
+                              style: TextStyle(
+                                fontSize: 11.5,
+                                color: Theme.of(
+                                  context,
+                                ).textTheme.bodySmall?.color,
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: AppSpacing.sm),
+                      Text(
+                        '${txn.type.isInflow ? '+' : '-'}${formatUsd(txn.amount)}',
+                        style: TextStyle(
+                          color: color,
+                          fontWeight: FontWeight.w800,
+                          fontSize: 15,
+                          fontFeatures: const [FontFeature.tabularFigures()],
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 4),
-                  StatusBadge(status: txn.status),
-                ],
+                ),
               ),
             ],
           ),

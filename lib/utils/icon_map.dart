@@ -23,6 +23,10 @@ const Map<String, IconData> iconMap = {
   'fitness_center': Icons.fitness_center_rounded,
   'phone_iphone': Icons.phone_iphone_rounded,
   'more_horiz': Icons.more_horiz_rounded,
+  'warning': Icons.warning_amber_rounded,
+  'trending_down': Icons.trending_down_rounded,
+  'info': Icons.info_outline_rounded,
+  'flag': Icons.flag_rounded,
 };
 
 IconData iconFor(String key) => iconMap[key] ?? Icons.category_rounded;

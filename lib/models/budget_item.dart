@@ -1,6 +1,14 @@
 import 'enums.dart';
 
 /// Item de planejamento (presupuesto) de gasto mensal para uma categoria.
+///
+/// PRINCÍPIO DE FONTE ÚNICA DE VERDADE: a Planificación é a base do
+/// sistema — dívidas e objetivos nunca criam lançamentos "soltos"; eles
+/// geram automaticamente um [BudgetItem] por mês através de [linkedDebtId]
+/// / [linkedGoalId]. Esses vínculos (não mais texto livre em [description])
+/// permitem que o AppState identifique com segurança quais itens de
+/// planejamento pertencem a uma dívida/objetivo, sem depender de parsing
+/// de strings.
 class BudgetItem {
   String id;
   int month;
@@ -9,12 +17,14 @@ class BudgetItem {
   String subcategory;
   String country;
   double planned;
-  TxNature nature;
   DateTime? dueDate;
   Priority priority;
   TxStatus status;
   String description;
   PaymentMethod method;
+  bool autoSuggested; // criado automaticamente pelo motor de sugestões
+  String? linkedDebtId; // item gerado automaticamente por uma Deuda
+  String? linkedGoalId; // item gerado automaticamente por um Objetivo
 
   BudgetItem({
     required this.id,
@@ -24,13 +34,18 @@ class BudgetItem {
     required this.subcategory,
     required this.country,
     required this.planned,
-    this.nature = TxNature.variable,
     this.dueDate,
     this.priority = Priority.media,
     this.status = TxStatus.pendiente,
     this.description = '',
     this.method = PaymentMethod.efectivo,
+    this.autoSuggested = false,
+    this.linkedDebtId,
+    this.linkedGoalId,
   });
+
+  bool get isDebtInstallment => linkedDebtId != null;
+  bool get isGoalContribution => linkedGoalId != null;
 
   Map<String, dynamic> toJson() => {
     'id': id,
@@ -40,43 +55,58 @@ class BudgetItem {
     'subcategory': subcategory,
     'country': country,
     'planned': planned,
-    'nature': nature.name,
     'dueDate': dueDate?.toIso8601String(),
     'priority': priority.name,
     'status': status.name,
     'description': description,
     'method': method.name,
+    'autoSuggested': autoSuggested,
+    'linkedDebtId': linkedDebtId,
+    'linkedGoalId': linkedGoalId,
   };
 
-  factory BudgetItem.fromJson(Map<String, dynamic> json) => BudgetItem(
-    id: json['id'] as String,
-    month: json['month'] as int,
-    year: json['year'] as int,
-    category: json['category'] as String,
-    subcategory: json['subcategory'] as String,
-    country: json['country'] as String,
-    planned: (json['planned'] as num).toDouble(),
-    nature: TxNatureX.fromString(json['nature'] as String? ?? 'variable'),
-    dueDate: json['dueDate'] != null
-        ? DateTime.parse(json['dueDate'] as String)
-        : null,
-    priority: PriorityX.fromString(json['priority'] as String? ?? 'media'),
-    status: TxStatusX.fromString(json['status'] as String? ?? 'pendiente'),
-    description: json['description'] as String? ?? '',
-    method: PaymentMethodX.fromString(json['method'] as String? ?? 'efectivo'),
-  );
+  factory BudgetItem.fromJson(Map<String, dynamic> json) {
+    // Migração retrocompatível: bases antigas guardavam o vínculo como
+    // "debt:<id>" dentro de description.
+    String? legacyDebtId;
+    final desc = json['description'] as String? ?? '';
+    if (desc.startsWith('debt:')) legacyDebtId = desc.substring(5);
+    return BudgetItem(
+      id: json['id'] as String,
+      month: json['month'] as int,
+      year: json['year'] as int,
+      category: json['category'] as String,
+      subcategory: json['subcategory'] as String,
+      country: json['country'] as String,
+      planned: (json['planned'] as num).toDouble(),
+      dueDate: json['dueDate'] != null
+          ? DateTime.parse(json['dueDate'] as String)
+          : null,
+      priority: PriorityX.fromString(json['priority'] as String? ?? 'media'),
+      status: TxStatusX.fromString(json['status'] as String? ?? 'pendiente'),
+      description: legacyDebtId != null ? '' : desc,
+      method: PaymentMethodX.fromString(
+        json['method'] as String? ?? 'efectivo',
+      ),
+      autoSuggested: json['autoSuggested'] as bool? ?? false,
+      linkedDebtId: json['linkedDebtId'] as String? ?? legacyDebtId,
+      linkedGoalId: json['linkedGoalId'] as String?,
+    );
+  }
 
   BudgetItem copyWith({
     String? category,
     String? subcategory,
     String? country,
     double? planned,
-    TxNature? nature,
     DateTime? dueDate,
     Priority? priority,
     TxStatus? status,
     String? description,
     PaymentMethod? method,
+    bool? autoSuggested,
+    String? linkedDebtId,
+    String? linkedGoalId,
   }) {
     return BudgetItem(
       id: id,
@@ -86,73 +116,14 @@ class BudgetItem {
       subcategory: subcategory ?? this.subcategory,
       country: country ?? this.country,
       planned: planned ?? this.planned,
-      nature: nature ?? this.nature,
       dueDate: dueDate ?? this.dueDate,
       priority: priority ?? this.priority,
       status: status ?? this.status,
       description: description ?? this.description,
       method: method ?? this.method,
-    );
-  }
-}
-
-/// Objetivo de investimento (meta de longo prazo, ex: Fondo de emergencia).
-class InvestmentGoal {
-  String id;
-  String name;
-  double targetAmount;
-  double currentAmount;
-  DateTime? targetDate;
-  String description;
-
-  InvestmentGoal({
-    required this.id,
-    required this.name,
-    required this.targetAmount,
-    this.currentAmount = 0,
-    this.targetDate,
-    this.description = '',
-  });
-
-  double get remaining =>
-      (targetAmount - currentAmount).clamp(0, double.infinity);
-  double get progress =>
-      targetAmount <= 0 ? 0 : (currentAmount / targetAmount).clamp(0, 1);
-
-  Map<String, dynamic> toJson() => {
-    'id': id,
-    'name': name,
-    'targetAmount': targetAmount,
-    'currentAmount': currentAmount,
-    'targetDate': targetDate?.toIso8601String(),
-    'description': description,
-  };
-
-  factory InvestmentGoal.fromJson(Map<String, dynamic> json) => InvestmentGoal(
-    id: json['id'] as String,
-    name: json['name'] as String,
-    targetAmount: (json['targetAmount'] as num).toDouble(),
-    currentAmount: (json['currentAmount'] as num?)?.toDouble() ?? 0,
-    targetDate: json['targetDate'] != null
-        ? DateTime.parse(json['targetDate'] as String)
-        : null,
-    description: json['description'] as String? ?? '',
-  );
-
-  InvestmentGoal copyWith({
-    String? name,
-    double? targetAmount,
-    double? currentAmount,
-    DateTime? targetDate,
-    String? description,
-  }) {
-    return InvestmentGoal(
-      id: id,
-      name: name ?? this.name,
-      targetAmount: targetAmount ?? this.targetAmount,
-      currentAmount: currentAmount ?? this.currentAmount,
-      targetDate: targetDate ?? this.targetDate,
-      description: description ?? this.description,
+      autoSuggested: autoSuggested ?? this.autoSuggested,
+      linkedDebtId: linkedDebtId ?? this.linkedDebtId,
+      linkedGoalId: linkedGoalId ?? this.linkedGoalId,
     );
   }
 }

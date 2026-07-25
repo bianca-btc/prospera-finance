@@ -3,35 +3,36 @@ import '../models/enums.dart';
 import '../models/transaction.dart';
 import '../models/budget_item.dart';
 import '../models/taxonomy.dart';
+import '../models/goal.dart';
+import '../models/debt.dart';
 
 const _uuid = Uuid();
 
-/// Dados oficiais do usuário (Info.txt), reorganizados conforme o brief:
-/// - "Ceremonia" separada em Ingreso (Servicios > Ceremonias) e Gastos
-///   (Eventos > Alquiler de espacio, Eventos > Equipo/Staff).
-/// - "Alquiler" consolidado em 3 subcategorias distintas conforme contexto:
-///   Eventos > Alquiler de espacio, Vivienda > Alquiler, Transporte > Alquiler de vehículo.
-/// - Itens com valor $0 marcados como pendentes de programação (isPending)
-///   e não contabilizados nos totais.
-/// Ano de referência: 2025 (meses 8 a 12 = Agosto a Diciembre).
+/// Dados oficiais do usuário (Info.txt), reorganizados nas categorías
+/// padrão do Prospera. Ano de referência: 2025 (meses 8 a 12).
 class SeedData {
   static const seedYear = 2025;
   static const seedCountry = 'El Salvador';
+
+  // IDs fixos para os objetivos de demonstração — usados tanto em [goals]
+  // quanto nas transações de aporte geradas em [buildTransactions], para
+  // que InvestmentGoal.currentAmount (derivado das transações vinculadas,
+  // única fonte de verdade) reflita o progreso de demonstração pretendido.
+  static final String _emergencyGoalId = _uuid.v4();
+  static final String _equipmentGoalId = _uuid.v4();
 
   static List<Txn> buildTransactions() {
     final List<Txn> list = [];
     for (final month in [8, 9, 10, 11, 12]) {
       final date = DateTime(seedYear, month, 5);
 
-      // INGRESO: Servicios > Ceremonias
       list.add(
         Txn(
           id: _uuid.v4(),
           type: TxType.ingreso,
-          nature: TxNature.fijo,
-          status: TxStatus.pendiente,
+          status: TxStatus.pagado,
           country: seedCountry,
-          category: 'Servicios',
+          category: 'Negocios',
           subcategory: 'Ceremonias',
           amount: 2280,
           date: date,
@@ -39,15 +40,13 @@ class SeedData {
         ),
       );
 
-      // GASTO: Eventos > Alquiler de espacio
       list.add(
         Txn(
           id: _uuid.v4(),
           type: TxType.gasto,
-          nature: TxNature.fijo,
-          status: TxStatus.pendiente,
+          status: TxStatus.pagado,
           country: seedCountry,
-          category: 'Eventos',
+          category: 'Negocios',
           subcategory: 'Alquiler de espacio',
           amount: 250,
           date: date,
@@ -55,29 +54,25 @@ class SeedData {
         ),
       );
 
-      // GASTO: Eventos > Equipo/Staff
       list.add(
         Txn(
           id: _uuid.v4(),
           type: TxType.gasto,
-          nature: TxNature.variable,
-          status: TxStatus.pendiente,
+          status: TxStatus.pagado,
           country: seedCountry,
-          category: 'Eventos',
-          subcategory: 'Equipo/Staff',
+          category: 'Negocios',
+          subcategory: 'Equipo y staff',
           amount: 250,
           date: date,
           description: 'Pago al equipo/staff de apoyo',
         ),
       );
 
-      // GASTO: Transporte > Pasajes (Vuelo)
       list.add(
         Txn(
           id: _uuid.v4(),
           type: TxType.gasto,
-          nature: TxNature.variable,
-          status: TxStatus.pendiente,
+          status: TxStatus.pagado,
           country: seedCountry,
           category: 'Transporte',
           subcategory: 'Pasajes',
@@ -87,13 +82,11 @@ class SeedData {
         ),
       );
 
-      // GASTO: Transporte > Alquiler de vehículo
       list.add(
         Txn(
           id: _uuid.v4(),
           type: TxType.gasto,
-          nature: TxNature.variable,
-          status: TxStatus.pendiente,
+          status: TxStatus.pagado,
           country: seedCountry,
           category: 'Transporte',
           subcategory: 'Alquiler de vehículo',
@@ -103,29 +96,25 @@ class SeedData {
         ),
       );
 
-      // GASTO: Transporte > Combustible
       list.add(
         Txn(
           id: _uuid.v4(),
           type: TxType.gasto,
-          nature: TxNature.variable,
-          status: TxStatus.pendiente,
+          status: TxStatus.pagado,
           country: seedCountry,
           category: 'Transporte',
-          subcategory: 'Combustible',
+          subcategory: 'Gasolina',
           amount: 100,
           date: date,
           description: 'Gasolina del vehículo',
         ),
       );
 
-      // GASTO: Vivienda > Alquiler (valor principal $315)
       list.add(
         Txn(
           id: _uuid.v4(),
           type: TxType.gasto,
-          nature: TxNature.fijo,
-          status: TxStatus.pendiente,
+          status: TxStatus.pagado,
           country: seedCountry,
           category: 'Vivienda',
           subcategory: 'Alquiler',
@@ -135,40 +124,55 @@ class SeedData {
         ),
       );
 
-      // PENDIENTE $0: Vivienda > Alquiler duplicado, a programar
+      // Pendiente $0 (a programar) — não conta nos totais.
       list.add(
         Txn(
           id: _uuid.v4(),
           type: TxType.gasto,
-          nature: TxNature.fijo,
           status: TxStatus.pendiente,
           country: seedCountry,
           category: 'Vivienda',
           subcategory: 'Alquiler',
           amount: 0,
           date: date,
-          description: 'Pendiente de programar (duplicado original)',
-          isPending: true,
-        ),
-      );
-
-      // PENDIENTE $0: Deudas > Préstamo (Gloria)
-      list.add(
-        Txn(
-          id: _uuid.v4(),
-          type: TxType.deuda,
-          nature: TxNature.fijo,
-          status: TxStatus.pendiente,
-          country: seedCountry,
-          category: 'Deudas',
-          subcategory: 'Préstamo (Gloria)',
-          amount: 0,
-          date: date,
-          description: 'Deuda pendiente de activación',
+          description: 'Pendiente de programar',
           isPending: true,
         ),
       );
     }
+
+    // Aportes de demonstração vinculados aos objetivos (única fonte de
+    // verdade: InvestmentGoal.currentAmount é recalculado a partir destas
+    // transações, então elas precisam existir para reproduzir o progreso
+    // esperado nos dados de exemplo).
+    list.add(
+      Txn(
+        id: _uuid.v4(),
+        type: TxType.inversion,
+        status: TxStatus.pagado,
+        country: seedCountry,
+        category: 'Inversiones',
+        subcategory: 'Fondo de emergencia',
+        amount: 450,
+        date: DateTime(seedYear, 9, 10),
+        description: 'Aporte a "Fondo de emergencia"',
+        goalId: _emergencyGoalId,
+      ),
+    );
+    list.add(
+      Txn(
+        id: _uuid.v4(),
+        type: TxType.inversion,
+        status: TxStatus.pagado,
+        country: seedCountry,
+        category: 'Inversiones',
+        subcategory: 'Nuevo equipo de ceremonia',
+        amount: 200,
+        date: DateTime(seedYear, 10, 15),
+        description: 'Aporte a "Nuevo equipo de ceremonia"',
+        goalId: _equipmentGoalId,
+      ),
+    );
     return list;
   }
 
@@ -180,22 +184,20 @@ class SeedData {
           id: _uuid.v4(),
           month: month,
           year: seedYear,
-          category: 'Eventos',
+          category: 'Negocios',
           subcategory: 'Alquiler de espacio',
           country: seedCountry,
           planned: 250,
-          nature: TxNature.fijo,
           priority: Priority.alta,
         ),
         BudgetItem(
           id: _uuid.v4(),
           month: month,
           year: seedYear,
-          category: 'Eventos',
-          subcategory: 'Equipo/Staff',
+          category: 'Negocios',
+          subcategory: 'Equipo y staff',
           country: seedCountry,
           planned: 250,
-          nature: TxNature.variable,
           priority: Priority.media,
         ),
         BudgetItem(
@@ -206,7 +208,6 @@ class SeedData {
           subcategory: 'Pasajes',
           country: seedCountry,
           planned: 350,
-          nature: TxNature.variable,
           priority: Priority.alta,
         ),
         BudgetItem(
@@ -217,7 +218,6 @@ class SeedData {
           subcategory: 'Alquiler de vehículo',
           country: seedCountry,
           planned: 100,
-          nature: TxNature.variable,
           priority: Priority.media,
         ),
         BudgetItem(
@@ -225,10 +225,9 @@ class SeedData {
           month: month,
           year: seedYear,
           category: 'Transporte',
-          subcategory: 'Combustible',
+          subcategory: 'Gasolina',
           country: seedCountry,
           planned: 100,
-          nature: TxNature.variable,
           priority: Priority.baja,
         ),
         BudgetItem(
@@ -239,7 +238,6 @@ class SeedData {
           subcategory: 'Alquiler',
           country: seedCountry,
           planned: 315,
-          nature: TxNature.fijo,
           priority: Priority.alta,
           dueDate: DateTime(seedYear, month, 5),
         ),
@@ -248,59 +246,98 @@ class SeedData {
     return list;
   }
 
+  /// Categorías padrão do Prospera (conforme brief). isCustom=false para
+  /// que a UI sempre as liste primeiro, com as categorías do usuário depois.
   static List<CategoryDef> expenseCategories() => [
     CategoryDef(
-      name: 'Eventos',
-      subcategories: ['Alquiler de espacio', 'Equipo/Staff'],
-      icon: 'event',
-    ),
-    CategoryDef(
-      name: 'Transporte',
-      subcategories: ['Pasajes', 'Alquiler de vehículo', 'Combustible'],
-      icon: 'directions_car',
-    ),
-    CategoryDef(
       name: 'Vivienda',
-      subcategories: ['Alquiler', 'Servicios básicos'],
+      subcategories: ['Alquiler', 'Servicios básicos', 'Mantenimiento'],
       icon: 'home',
-    ),
-    CategoryDef(
-      name: 'Deudas',
-      subcategories: ['Préstamo (Gloria)'],
-      icon: 'account_balance',
+      controllability: Controllability.pocoControlable,
     ),
     CategoryDef(
       name: 'Alimentación',
       subcategories: ['Supermercado', 'Restaurantes'],
       icon: 'restaurant',
+      controllability: Controllability.semiControlable,
+      subControllability: {'Restaurantes': Controllability.controlable},
     ),
     CategoryDef(
-      name: 'Ocio',
-      subcategories: ['Entretenimiento', 'Viajes'],
-      icon: 'sports_esports',
-    ),
-    CategoryDef(
-      name: 'Educación',
-      subcategories: ['Cursos', 'Materiales'],
-      icon: 'school',
+      name: 'Transporte',
+      subcategories: [
+        'Pasajes',
+        'Alquiler de vehículo',
+        'Gasolina',
+        'Mantenimiento',
+      ],
+      icon: 'directions_car',
+      controllability: Controllability.controlable,
     ),
     CategoryDef(
       name: 'Salud',
-      subcategories: ['Consultas', 'Medicamentos'],
+      subcategories: ['Consultas', 'Medicamentos', 'Seguro'],
       icon: 'local_hospital',
+      controllability: Controllability.pocoControlable,
+    ),
+    CategoryDef(
+      name: 'Educación',
+      subcategories: ['Cursos', 'Materiales', 'Colegiatura'],
+      icon: 'school',
+      controllability: Controllability.pocoControlable,
+    ),
+    CategoryDef(
+      name: 'Negocios',
+      subcategories: [
+        'Ceremonias',
+        'Alquiler de espacio',
+        'Equipo y staff',
+        'Marketing',
+      ],
+      icon: 'volunteer_activism',
+      controllability: Controllability.semiControlable,
+    ),
+    CategoryDef(
+      name: 'Ocio',
+      subcategories: ['Entretenimiento', 'Viajes', 'Compras', 'Regalos'],
+      icon: 'sports_esports',
+      controllability: Controllability.controlable,
+    ),
+    CategoryDef(
+      name: 'Impuestos',
+      subcategories: ['Impuesto sobre la renta', 'Otros impuestos'],
+      icon: 'account_balance',
+      controllability: Controllability.pocoControlable,
+    ),
+    CategoryDef(
+      name: 'Deudas',
+      subcategories: ['Préstamos', 'Tarjetas de crédito'],
+      icon: 'credit_card',
+      controllability: Controllability.pocoControlable,
+    ),
+    CategoryDef(
+      name: 'Otros',
+      subcategories: ['Varios'],
+      icon: 'more_horiz',
+      controllability: Controllability.semiControlable,
     ),
   ];
 
   static List<CategoryDef> incomeCategories() => [
     CategoryDef(
-      name: 'Servicios',
-      subcategories: ['Ceremonias', 'Consultorías'],
-      icon: 'volunteer_activism',
+      name: 'Ingresos',
+      subcategories: [
+        'Salario',
+        'Ceremonias',
+        'Consultorías',
+        'Ventas',
+        'Otros ingresos',
+      ],
+      icon: 'attach_money',
     ),
     CategoryDef(
-      name: 'Otros ingresos',
-      subcategories: ['Regalos', 'Ventas'],
-      icon: 'attach_money',
+      name: 'Inversiones',
+      subcategories: ['Rendimientos', 'Dividendos'],
+      icon: 'trending_up',
     ),
   ];
 
@@ -308,7 +345,36 @@ class SeedData {
     'Panamá',
     'El Salvador',
     'Honduras',
-    'Argentina',
     'Brasil',
+    'Argentina',
   ];
+
+  static List<InvestmentGoal> goals() => [
+    InvestmentGoal(
+      id: _emergencyGoalId,
+      name: 'Fondo de emergencia',
+      targetAmount: 3000,
+      // currentAmount es derivado automáticamente por AppState a partir de
+      // las transacciones vinculadas (goalId) — ver aportes en
+      // buildTransactions(). No se fija manualmente aquí (fuente única).
+      targetDate: DateTime(seedYear + 1, 6, 1),
+      description: 'Cobertura de 3 meses de gastos fijos',
+      icon: 'savings',
+      category: 'Inversiones',
+      subcategory: 'Fondo de emergencia',
+      country: seedCountry,
+    ),
+    InvestmentGoal(
+      id: _equipmentGoalId,
+      name: 'Nuevo equipo de ceremonia',
+      targetAmount: 1200,
+      targetDate: DateTime(seedYear, 12, 1),
+      icon: 'flag',
+      category: 'Inversiones',
+      subcategory: 'Nuevo equipo de ceremonia',
+      country: seedCountry,
+    ),
+  ];
+
+  static List<Debt> debts() => [];
 }

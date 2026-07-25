@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
-import '../models/budget_item.dart';
+import '../models/goal.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
 import '../utils/formatters.dart';
@@ -25,6 +25,9 @@ class _GoalFormScreenState extends State<GoalFormScreen> {
   final _descCtrl = TextEditingController();
   DateTime? _targetDate;
 
+  double _previewTarget = 0;
+  double _previewCurrent = 0;
+
   @override
   void initState() {
     super.initState();
@@ -34,10 +37,41 @@ class _GoalFormScreenState extends State<GoalFormScreen> {
     _currentCtrl.text = g != null ? g.currentAmount.toStringAsFixed(2) : '0';
     _descCtrl.text = g?.description ?? '';
     _targetDate = g?.targetDate;
+    _previewTarget = g?.targetAmount ?? 0;
+    _previewCurrent = g?.currentAmount ?? 0;
+    _targetCtrl.addListener(_recalcPreview);
+    _currentCtrl.addListener(_recalcPreview);
+  }
+
+  void _recalcPreview() {
+    setState(() {
+      _previewTarget =
+          double.tryParse(_targetCtrl.text.replaceAll(',', '.')) ?? 0;
+      _previewCurrent =
+          double.tryParse(_currentCtrl.text.replaceAll(',', '.')) ?? 0;
+    });
+  }
+
+  /// Meta mensal automática — recalcula meses restantes se el aporte
+  /// difiere del previsto (misma lógica de InvestmentGoal.monthlyTarget).
+  double get _monthlyTargetPreview {
+    final remaining = (_previewTarget - _previewCurrent).clamp(
+      0,
+      double.infinity,
+    );
+    if (remaining <= 0) return 0;
+    if (_targetDate == null) return remaining * 0.1;
+    final now = DateTime.now();
+    final months =
+        (_targetDate!.year - now.year) * 12 + (_targetDate!.month - now.month);
+    final monthsRemaining = months < 1 ? 1 : months;
+    return remaining / monthsRemaining;
   }
 
   @override
   void dispose() {
+    _targetCtrl.removeListener(_recalcPreview);
+    _currentCtrl.removeListener(_recalcPreview);
     _nameCtrl.dispose();
     _targetCtrl.dispose();
     _currentCtrl.dispose();
@@ -147,6 +181,9 @@ class _GoalFormScreenState extends State<GoalFormScreen> {
               ),
             ),
             const SizedBox(height: AppSpacing.md),
+            if (_monthlyTargetPreview > 0)
+              _MonthlyTargetPreviewCard(value: _monthlyTargetPreview),
+            const SizedBox(height: AppSpacing.md),
             TextFormField(
               controller: _descCtrl,
               maxLines: 3,
@@ -191,6 +228,56 @@ class _GoalFormScreenState extends State<GoalFormScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// Card que exibe, em linguagem simples, cuánto hay que aportar cada mes
+/// para alcanzar el objetivo — sustituye el cálculo manual por una
+/// recomendación directa (principio: "sustituir números por interpretaciones").
+class _MonthlyTargetPreviewCard extends StatelessWidget {
+  final double value;
+  const _MonthlyTargetPreviewCard({required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(AppSpacing.lg),
+      decoration: BoxDecoration(
+        color: AppColors.inversion.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.inversion.withValues(alpha: 0.35)),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.insights_rounded,
+            color: AppColors.inversion,
+            size: 22,
+          ),
+          const SizedBox(width: AppSpacing.md),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Aporte mensual sugerido',
+                  style: TextStyle(fontSize: 12, color: Colors.white70),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  formatUsd(value, decimals: false),
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.inversion,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

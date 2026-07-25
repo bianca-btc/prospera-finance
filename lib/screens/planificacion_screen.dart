@@ -3,12 +3,15 @@ import 'package:provider/provider.dart';
 
 import '../models/enums.dart';
 import '../models/budget_item.dart';
+import '../models/debt.dart';
+import '../models/goal.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
 import '../utils/formatters.dart';
 import '../utils/period.dart';
 import '../widgets/common.dart';
 import 'budget_form_screen.dart';
+import 'debt_form_screen.dart';
 import 'goal_form_screen.dart';
 
 class PlanificacionScreen extends StatefulWidget {
@@ -27,6 +30,7 @@ class _PlanificacionScreenState extends State<PlanificacionScreen> {
         .where((b) => periods.contains(YearMonth(b.year, b.month)))
         .toList();
     final txns = state.txnsForSelectedPeriods;
+    final debts = state.debts;
 
     // Agrupa realizado por categoria+subcategoria (apenas gastos/deudas).
     double realizadoFor(BudgetItem b) {
@@ -64,10 +68,22 @@ class _PlanificacionScreenState extends State<PlanificacionScreen> {
                   context,
                 ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
               ),
-              TextButton.icon(
-                onPressed: () => _replicateMonth(context, state),
-                icon: const Icon(Icons.copy_all_rounded, size: 16),
-                label: const Text('Replicar mes'),
+              PopupMenuButton<String>(
+                icon: const Icon(Icons.more_horiz_rounded, size: 20),
+                onSelected: (v) {
+                  if (v == 'replicate') _showReplicateOptions(context, state);
+                  if (v == 'suggest') _applySuggestion(context, state);
+                },
+                itemBuilder: (ctx) => const [
+                  PopupMenuItem(
+                    value: 'replicate',
+                    child: Text('Replicar planificación'),
+                  ),
+                  PopupMenuItem(
+                    value: 'suggest',
+                    child: Text('Sugerir próximo mes'),
+                  ),
+                ],
               ),
             ],
           ),
@@ -84,16 +100,28 @@ class _PlanificacionScreenState extends State<PlanificacionScreen> {
               ),
             ),
           const SizedBox(height: AppSpacing.xxl),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                'Objetivos de inversión',
-                style: Theme.of(
-                  context,
-                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+          Text(
+            'Deudas',
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          if (debts.isEmpty)
+            const SectionCard(child: Text('No hay deudas registradas.'))
+          else
+            ...debts.map(
+              (d) => Padding(
+                padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+                child: _DebtTile(debt: d),
               ),
-            ],
+            ),
+          const SizedBox(height: AppSpacing.xxl),
+          Text(
+            'Objetivos de inversión',
+            style: Theme.of(
+              context,
+            ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
           ),
           const SizedBox(height: AppSpacing.sm),
           if (state.goals.isEmpty)
@@ -133,6 +161,19 @@ class _PlanificacionScreenState extends State<PlanificacionScreen> {
             ),
             ListTile(
               leading: const Icon(
+                Icons.account_balance_outlined,
+                color: AppColors.deuda,
+              ),
+              title: const Text('Nueva deuda'),
+              onTap: () {
+                Navigator.pop(ctx);
+                Navigator.of(context).push(
+                  MaterialPageRoute(builder: (_) => const DebtFormScreen()),
+                );
+              },
+            ),
+            ListTile(
+              leading: const Icon(
                 Icons.flag_outlined,
                 color: AppColors.inversion,
               ),
@@ -150,17 +191,283 @@ class _PlanificacionScreenState extends State<PlanificacionScreen> {
     );
   }
 
-  Future<void> _replicateMonth(BuildContext context, AppState state) async {
+  /// Ponto de partida do fluxo de replicação: mostra as 5 opções previstas
+  /// (próximo mes, varios meses consecutivos, meses específicos, año entero,
+  /// selección manual). Todas terminam chamando [_confirmAndReplicate], que
+  /// é o único caminho que efetivamente copia o planejamento — mantendo uma
+  /// única fonte de verdade também para esta ação.
+  void _showReplicateOptions(BuildContext context, AppState state) {
     final periods = state.selectedPeriods.toList()..sort();
     if (periods.isEmpty) return;
     final from = periods.last;
-    final to = from.next();
+    showModalBottomSheet(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Wrap(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                AppSpacing.lg,
+                AppSpacing.lg,
+                AppSpacing.lg,
+                AppSpacing.sm,
+              ),
+              child: Text(
+                'Replicar planificación de ${monthLabel(from)}',
+                style: const TextStyle(fontWeight: FontWeight.w700),
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.arrow_forward_rounded),
+              title: const Text('Próximo mes'),
+              subtitle: Text(monthLabel(from.next())),
+              onTap: () {
+                Navigator.pop(ctx);
+                _confirmAndReplicate(context, state, from, [from.next()]);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.repeat_rounded),
+              title: const Text('Varios meses consecutivos'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _replicateConsecutive(context, state, from);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.checklist_rounded),
+              title: const Text('Meses específicos'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _replicateSpecificMonths(context, state, from);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.calendar_view_month_rounded),
+              title: const Text('Año entero'),
+              onTap: () {
+                Navigator.pop(ctx);
+                final targets = List.generate(12, (i) => from.addMonths(i + 1));
+                _confirmAndReplicate(context, state, from, targets);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.edit_calendar_outlined),
+              title: const Text('Selección manual'),
+              onTap: () {
+                Navigator.pop(ctx);
+                _replicateManualSelection(context, state, from);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _replicateConsecutive(
+    BuildContext context,
+    AppState state,
+    YearMonth from,
+  ) async {
+    final ctrl = TextEditingController(text: '3');
+    final n = await showDialog<int>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Varios meses consecutivos'),
+        content: TextField(
+          controller: ctrl,
+          keyboardType: TextInputType.number,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: '¿Cuántos meses?'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () =>
+                Navigator.pop(ctx, int.tryParse(ctrl.text) ?? 0),
+            child: const Text('Continuar'),
+          ),
+        ],
+      ),
+    );
+    if (n == null || n <= 0) return;
+    final targets = List.generate(n, (i) => from.addMonths(i + 1));
+    if (!context.mounted) return;
+    await _confirmAndReplicate(context, state, from, targets);
+  }
+
+  Future<void> _replicateSpecificMonths(
+    BuildContext context,
+    AppState state,
+    YearMonth from,
+  ) async {
+    final candidates = List.generate(24, (i) => from.addMonths(i + 1));
+    final selected = <YearMonth>{};
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) => AlertDialog(
+          title: const Text('Meses específicos'),
+          content: SizedBox(
+            width: double.maxFinite,
+            height: 320,
+            child: ListView(
+              children: candidates.map((ym) {
+                final checked = selected.contains(ym);
+                return CheckboxListTile(
+                  value: checked,
+                  title: Text(monthLabel(ym)),
+                  onChanged: (v) => setLocal(() {
+                    if (v == true) {
+                      selected.add(ym);
+                    } else {
+                      selected.remove(ym);
+                    }
+                  }),
+                );
+              }).toList(),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancelar'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Continuar'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (ok != true || selected.isEmpty) return;
+    final targets = selected.toList()..sort();
+    if (!context.mounted) return;
+    await _confirmAndReplicate(context, state, from, targets);
+  }
+
+  Future<void> _replicateManualSelection(
+    BuildContext context,
+    AppState state,
+    YearMonth from,
+  ) async {
+    final added = <YearMonth>[];
+    var year = from.year;
+    var month = from.next().month;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setLocal) => AlertDialog(
+          title: const Text('Selección manual'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: DropdownButtonFormField<int>(
+                        initialValue: month,
+                        decoration: const InputDecoration(labelText: 'Mes'),
+                        items: List.generate(
+                          12,
+                          (i) => DropdownMenuItem(
+                            value: i + 1,
+                            child: Text(monthNamesEs[i + 1]),
+                          ),
+                        ),
+                        onChanged: (v) => setLocal(() => month = v ?? month),
+                      ),
+                    ),
+                    const SizedBox(width: AppSpacing.sm),
+                    Expanded(
+                      child: DropdownButtonFormField<int>(
+                        initialValue: year,
+                        decoration: const InputDecoration(labelText: 'Año'),
+                        items: List.generate(
+                          6,
+                          (i) => DropdownMenuItem(
+                            value: from.year + i,
+                            child: Text('${from.year + i}'),
+                          ),
+                        ),
+                        onChanged: (v) => setLocal(() => year = v ?? year),
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.add_circle_outline_rounded),
+                      onPressed: () => setLocal(() {
+                        final ym = YearMonth(year, month);
+                        if (!added.contains(ym)) added.add(ym);
+                      }),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                if (added.isEmpty)
+                  const Text('Ningún mes agregado todavía.')
+                else
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: (added.toList()..sort()).map(
+                      (ym) => Chip(
+                        label: Text(monthLabel(ym)),
+                        onDeleted: () => setLocal(() => added.remove(ym)),
+                      ),
+                    ).toList(),
+                  ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancelar'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Continuar'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (ok != true || added.isEmpty) return;
+    final targets = added.toList()..sort();
+    if (!context.mounted) return;
+    await _confirmAndReplicate(context, state, from, targets);
+  }
+
+  /// Confirmação final e execução única — chamada por todos os fluxos de
+  /// replicação acima, garantindo que a lógica de replicação em si exista
+  /// em um único lugar (fonte única de verdade também no fluxo de UI).
+  Future<void> _confirmAndReplicate(
+    BuildContext context,
+    AppState state,
+    YearMonth from,
+    List<YearMonth> targets,
+  ) async {
+    if (targets.isEmpty) return;
+    final sorted = targets.toList()..sort();
+    final label = sorted.length == 1
+        ? monthLabel(sorted.first)
+        : '${sorted.length} meses (${monthLabel(sorted.first)} – ${monthLabel(sorted.last)})';
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Replicar mes'),
+        title: const Text('Replicar planificación'),
         content: Text(
-          'Se copiará el presupuesto de ${monthLabel(from)} hacia ${monthLabel(to)}.',
+          'Se copiará el presupuesto de ${monthLabel(from)} hacia $label. '
+          'Las transacciones ejecutadas nunca se copian; cada mes quedará '
+          'independiente después de la replicación.',
         ),
         actions: [
           TextButton(
@@ -175,10 +482,52 @@ class _PlanificacionScreenState extends State<PlanificacionScreen> {
       ),
     );
     if (ok == true) {
-      await state.replicateBudgetMonth(from: from, to: to);
+      await state.replicateBudgetToMany(from: from, targets: sorted);
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Presupuesto replicado a ${monthLabel(to)}.')),
+          SnackBar(content: Text('Presupuesto replicado a $label.')),
+        );
+      }
+    }
+  }
+
+  /// Aplica a sugestão automática de orçamento (baseada no histórico) para
+  /// o mês seguinte ao último período selecionado — parte do "Planejamento
+  /// Inteligente" que aprende com o histórico e sugere o próximo mês.
+  Future<void> _applySuggestion(BuildContext context, AppState state) async {
+    final periods = state.selectedPeriods.toList()..sort();
+    final base = periods.isNotEmpty
+        ? periods.last
+        : YearMonth.fromDate(DateTime.now());
+    final target = base.next();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Sugerir próximo mes'),
+        content: Text(
+          'Con base en tu historial reciente, el sistema sugerirá automáticamente el presupuesto de ${monthLabel(target)}.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Sugerir'),
+          ),
+        ],
+      ),
+    );
+    if (ok == true) {
+      await state.applyBudgetSuggestion(target);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Presupuesto de ${monthLabel(target)} sugerido automáticamente.',
+            ),
+          ),
         );
       }
     }
@@ -204,6 +553,12 @@ class _BudgetTileState extends State<_BudgetTile> {
     final diff = b.planned - realizado;
     final progress = b.planned <= 0 ? 0.0 : realizado / b.planned;
     final overflow = realizado > b.planned;
+    // Color de la barra según el tipo de línea: azul para aportes de
+    // inversión/objetivo, rojo para gasto/deuda — igual criterio pedido
+    // para las transacciones.
+    final barColor = b.isGoalContribution
+        ? AppColors.inversion
+        : AppColors.gasto;
 
     return SectionCard(
       padding: const EdgeInsets.symmetric(
@@ -219,7 +574,7 @@ class _BudgetTileState extends State<_BudgetTile> {
               children: [
                 CategoryIcon(
                   iconKey: _iconKey(context, b.category),
-                  color: AppColors.gasto,
+                  color: barColor,
                   size: 36,
                 ),
                 const SizedBox(width: AppSpacing.md),
@@ -227,71 +582,91 @@ class _BudgetTileState extends State<_BudgetTile> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        '${b.category} · ${b.subcategory}',
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w600,
-                          fontSize: 13.5,
-                        ),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              '${b.category} · ${b.subcategory}',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                                fontSize: 13.5,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          if (b.autoSuggested)
+                            const Padding(
+                              padding: EdgeInsets.only(left: 4),
+                              child: Icon(
+                                Icons.auto_awesome_rounded,
+                                size: 14,
+                                color: AppColors.inversion,
+                              ),
+                            ),
+                        ],
                       ),
-                      const SizedBox(height: 2),
-                      Text(
-                        'Planificado ${formatUsd(b.planned, decimals: false)} · Realizado ${formatUsd(realizado, decimals: false)}',
-                        style: TextStyle(
-                          fontSize: 11.5,
-                          color: Theme.of(context).textTheme.bodySmall?.color,
-                        ),
+                      const SizedBox(height: 3),
+                      // Realizado destacado (bold, coloreado) vs. Planificado
+                      // en segundo plano — más fácil de leer de un vistazo
+                      // que la versión anterior (texto plano concatenado).
+                      Row(
+                        children: [
+                          Text(
+                            formatUsd(realizado, decimals: false),
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w800,
+                              color: overflow ? AppColors.gasto : barColor,
+                            ),
+                          ),
+                          Text(
+                            ' de ${formatUsd(b.planned, decimals: false)}',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Theme.of(
+                                context,
+                              ).textTheme.bodySmall?.color,
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
                 ),
+                const SizedBox(width: AppSpacing.sm),
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
-                    Text(
-                      diff >= 0
-                          ? '-${formatUsd(diff, decimals: false)} restante'
-                          : '+${formatUsd(-diff, decimals: false)} excedido',
-                      style: TextStyle(
-                        fontSize: 11.5,
-                        fontWeight: FontWeight.w600,
-                        color: diff >= 0 ? AppColors.ingreso : AppColors.gasto,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
                     PriorityBadge(priority: b.priority),
+                    const SizedBox(height: 4),
+                    Icon(
+                      _expanded
+                          ? Icons.expand_less_rounded
+                          : Icons.expand_more_rounded,
+                      size: 18,
+                    ),
                   ],
-                ),
-                Icon(
-                  _expanded
-                      ? Icons.expand_less_rounded
-                      : Icons.expand_more_rounded,
-                  size: 20,
                 ),
               ],
             ),
             const SizedBox(height: AppSpacing.sm),
-            ProgressBarWithOverflow(value: progress, color: AppColors.gasto),
+            ProgressBarWithOverflow(value: progress, color: barColor, height: 10),
             const SizedBox(height: 4),
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(
-                  '${(progress * 100).clamp(0, 999).toStringAsFixed(0)}% del presupuesto',
+                  overflow
+                      ? '¡Excedido! +${formatUsd(-diff, decimals: false)}'
+                      : '${(progress * 100).clamp(0, 999).toStringAsFixed(0)}% · faltan ${formatUsd(diff, decimals: false)}',
                   style: TextStyle(
                     fontSize: 10.5,
-                    color: Theme.of(context).textTheme.bodySmall?.color,
+                    fontWeight: overflow ? FontWeight.w700 : FontWeight.w500,
+                    color: overflow
+                        ? AppColors.gasto
+                        : Theme.of(context).textTheme.bodySmall?.color,
                   ),
                 ),
-                if (overflow)
-                  const Text(
-                    '¡Excedido!',
-                    style: TextStyle(
-                      fontSize: 10.5,
-                      color: AppColors.gasto,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
                 if (b.dueDate != null)
                   Text(
                     'Vence ${formatFullDate(b.dueDate!)}',
@@ -300,16 +675,13 @@ class _BudgetTileState extends State<_BudgetTile> {
                       color: Theme.of(context).textTheme.bodySmall?.color,
                     ),
                   ),
-                StatusBadge(status: b.status),
               ],
             ),
             if (_expanded) ...[
               const Divider(height: AppSpacing.lg),
-              _DetailRow(label: 'Naturaleza', value: b.nature.label),
               _DetailRow(label: 'País', value: b.country),
               _DetailRow(label: 'Método de pago', value: b.method.label),
-              if (b.description.isNotEmpty)
-                _DetailRow(label: 'Descripción', value: b.description),
+              if (b.description.isNotEmpty) _DetailRow(label: 'Descripción', value: b.description),
               const SizedBox(height: AppSpacing.sm),
               Row(
                 children: [
@@ -392,12 +764,136 @@ class _DetailRow extends StatelessWidget {
   }
 }
 
+class _DebtTile extends StatelessWidget {
+  final Debt debt;
+  const _DebtTile({required this.debt});
+
+  @override
+  Widget build(BuildContext context) {
+    final progress = debt.progress;
+    return SectionCard(
+      child: InkWell(
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => DebtFormScreen(existing: debt)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const CategoryIcon(
+                  iconKey: 'account_balance',
+                  color: AppColors.deuda,
+                  size: 36,
+                ),
+                const SizedBox(width: AppSpacing.md),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        debt.name,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w600,
+                          fontSize: 14,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        '${formatUsd(debt.monthlyInstallment, decimals: false)}/mes · ${debt.paidInstallments}/${debt.months} cuotas',
+                        style: TextStyle(
+                          fontSize: 11.5,
+                          color: Theme.of(context).textTheme.bodySmall?.color,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (debt.isSettled)
+                  const Icon(
+                    Icons.check_circle_rounded,
+                    color: AppColors.ingreso,
+                    size: 20,
+                  )
+                else
+                  OutlinedButton(
+                    onPressed: () => context
+                        .read<AppState>()
+                        .markNextInstallmentPaid(debt.id),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 4,
+                      ),
+                    ),
+                    child: const Text(
+                      'Pagar cuota',
+                      style: TextStyle(fontSize: 11.5),
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            ProgressBarWithOverflow(value: progress, color: AppColors.deuda),
+            const SizedBox(height: 6),
+            Text(
+              'Restante ${formatUsd(debt.remainingAmount, decimals: false)} de ${formatUsd(debt.totalAmount, decimals: false)}',
+              style: TextStyle(
+                fontSize: 11,
+                color: Theme.of(context).textTheme.bodySmall?.color,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _GoalTile extends StatelessWidget {
   final InvestmentGoal goal;
   const _GoalTile({required this.goal});
 
+  Future<void> _showContributeDialog(BuildContext context) async {
+    final ctrl = TextEditingController(
+      text: goal.monthlyTarget > 0 ? goal.monthlyTarget.toStringAsFixed(2) : '',
+    );
+    final amount = await showDialog<double>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Aportar a "${goal.name}"'),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          decoration: const InputDecoration(
+            labelText: 'Valor (USD)',
+            prefixText: '\$ ',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final v = double.tryParse(ctrl.text.replaceAll(',', '.'));
+              Navigator.pop(ctx, v);
+            },
+            child: const Text('Aportar'),
+          ),
+        ],
+      ),
+    );
+    if (amount != null && amount > 0 && context.mounted) {
+      await context.read<AppState>().contributeToGoal(goal.id, amount);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final completed = goal.isCompleted;
     return SectionCard(
       child: InkWell(
         onTap: () => Navigator.of(context).push(
@@ -436,14 +932,26 @@ class _GoalTile extends StatelessWidget {
                     ],
                   ),
                 ),
-                Text(
-                  '${(goal.progress * 100).toStringAsFixed(0)}%',
-                  style: const TextStyle(
-                    color: AppColors.inversion,
-                    fontWeight: FontWeight.w700,
-                    fontSize: 15,
+                if (completed)
+                  const Icon(
+                    Icons.check_circle_rounded,
+                    color: AppColors.ingreso,
+                    size: 20,
+                  )
+                else
+                  OutlinedButton(
+                    onPressed: () => _showContributeDialog(context),
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 4,
+                      ),
+                    ),
+                    child: const Text(
+                      'Aportar',
+                      style: TextStyle(fontSize: 11.5),
+                    ),
                   ),
-                ),
               ],
             ),
             const SizedBox(height: AppSpacing.sm),
@@ -456,10 +964,15 @@ class _GoalTile extends StatelessWidget {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(
-                  'Restante ${formatUsd(goal.remaining, decimals: false)}',
+                  completed
+                      ? (goal.isExceeded ? 'Meta superada' : 'Meta concluida')
+                      : 'Restante ${formatUsd(goal.remaining, decimals: false)}',
                   style: TextStyle(
                     fontSize: 11,
-                    color: Theme.of(context).textTheme.bodySmall?.color,
+                    fontWeight: completed ? FontWeight.w700 : FontWeight.w400,
+                    color: completed
+                        ? AppColors.ingreso
+                        : Theme.of(context).textTheme.bodySmall?.color,
                   ),
                 ),
                 if (goal.targetDate != null)

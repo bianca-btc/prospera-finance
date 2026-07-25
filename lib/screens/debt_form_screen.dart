@@ -2,90 +2,75 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 
-import '../models/enums.dart';
-import '../models/budget_item.dart';
+import '../models/debt.dart';
 import '../models/taxonomy.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
 import '../utils/formatters.dart';
-import '../utils/period.dart';
 import '../widgets/manage_lists_dialogs.dart';
 
 const _uuid = Uuid();
 
-/// Formulário completo de item de presupuesto (Planificación), com todos
-/// os campos exigidos pelo brief (tipo, natureza, categoria, país, valor,
-/// data, método de pagamento, estado, descrição, prioridade, vencimento).
-class BudgetFormScreen extends StatefulWidget {
-  final BudgetItem? existing;
-  // Prefill opcional (usado quando viene desde el formulario de transacción,
-  // para crear un plan nuevo sin duplicar la información ya ingresada).
-  final int? initialMonth;
-  final int? initialYear;
-  final String? initialCategory;
-  final String? initialSubcategory;
-  final String? initialCountry;
-  final double? initialPlanned;
-
-  const BudgetFormScreen({
-    super.key,
-    this.existing,
-    this.initialMonth,
-    this.initialYear,
-    this.initialCategory,
-    this.initialSubcategory,
-    this.initialCountry,
-    this.initialPlanned,
-  });
+/// Formulario de deuda: el usuario solo informa nombre, valor total, fecha
+/// inicial y cantidad de meses — el sistema divide automáticamente en
+/// cuotas mensuales iguales y las agrega al planeamiento (Planificación).
+/// Ejemplo: USD 1200 en 12 meses → USD 100/mes, generado sin esfuerzo manual.
+class DebtFormScreen extends StatefulWidget {
+  final Debt? existing;
+  const DebtFormScreen({super.key, this.existing});
 
   @override
-  State<BudgetFormScreen> createState() => _BudgetFormScreenState();
+  State<DebtFormScreen> createState() => _DebtFormScreenState();
 }
 
-class _BudgetFormScreenState extends State<BudgetFormScreen> {
+class _DebtFormScreenState extends State<DebtFormScreen> {
   final _formKey = GlobalKey<FormState>();
-
-  late int _month;
-  late int _year;
+  final _nameCtrl = TextEditingController();
+  final _totalCtrl = TextEditingController();
+  final _monthsCtrl = TextEditingController();
+  final _descCtrl = TextEditingController();
+  DateTime _startDate = DateTime.now();
   String? _category;
   String? _subcategory;
-  late String _country;
-  final _plannedCtrl = TextEditingController();
-  DateTime? _dueDate;
-  late Priority _priority;
-  final _descCtrl = TextEditingController();
-  late PaymentMethod _method;
+  String _country = '';
+
+  double _previewTotal = 0;
+  int _previewMonths = 1;
 
   @override
   void initState() {
     super.initState();
-    final b = widget.existing;
-    _month = b?.month ?? widget.initialMonth ?? DateTime.now().month;
-    _year = b?.year ?? widget.initialYear ?? DateTime.now().year;
-    _category = b?.category ?? widget.initialCategory;
-    _subcategory = b?.subcategory ?? widget.initialSubcategory;
-    _country = b?.country ?? widget.initialCountry ?? '';
-    _plannedCtrl.text = b != null
-        ? b.planned.toStringAsFixed(2)
-        : (widget.initialPlanned != null
-              ? widget.initialPlanned!.toStringAsFixed(2)
-              : '');
-    _dueDate = b?.dueDate;
-    _priority = b?.priority ?? Priority.media;
-    _descCtrl.text = b?.description ?? '';
-    _method = b?.method ?? PaymentMethod.efectivo;
+    final d = widget.existing;
+    _nameCtrl.text = d?.name ?? '';
+    _totalCtrl.text = d != null ? d.totalAmount.toStringAsFixed(2) : '';
+    _monthsCtrl.text = d != null ? d.months.toString() : '';
+    _descCtrl.text = d?.description ?? '';
+    _startDate = d?.startDate ?? DateTime.now();
+    _category = d?.category;
+    _subcategory = d?.subcategory;
+    _country = d?.country ?? '';
+    _previewTotal = d?.totalAmount ?? 0;
+    _previewMonths = d?.months ?? 1;
+    _totalCtrl.addListener(_recalcPreview);
+    _monthsCtrl.addListener(_recalcPreview);
   }
 
-  @override
-  void dispose() {
-    _plannedCtrl.dispose();
-    _descCtrl.dispose();
-    super.dispose();
+  void _recalcPreview() {
+    setState(() {
+      _previewTotal =
+          double.tryParse(_totalCtrl.text.replaceAll(',', '.')) ?? 0;
+      _previewMonths = int.tryParse(_monthsCtrl.text) ?? 1;
+      if (_previewMonths < 1) _previewMonths = 1;
+    });
   }
+
+  double get _monthlyInstallmentPreview =>
+      _previewMonths <= 0 ? _previewTotal : _previewTotal / _previewMonths;
 
   void _ensureDefaults(AppState state) {
-    if (_country.isEmpty && state.countries.isNotEmpty)
+    if (_country.isEmpty && state.countries.isNotEmpty) {
       _country = state.countries.first;
+    }
     final cats = state.expenseCategories;
     if (_category == null || !cats.any((c) => c.name == _category)) {
       _category = cats.isNotEmpty ? cats.first.name : null;
@@ -99,14 +84,25 @@ class _BudgetFormScreenState extends State<BudgetFormScreen> {
     }
   }
 
-  Future<void> _pickDueDate() async {
+  @override
+  void dispose() {
+    _totalCtrl.removeListener(_recalcPreview);
+    _monthsCtrl.removeListener(_recalcPreview);
+    _nameCtrl.dispose();
+    _totalCtrl.dispose();
+    _monthsCtrl.dispose();
+    _descCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pickStartDate() async {
     final picked = await showDatePicker(
       context: context,
-      initialDate: _dueDate ?? DateTime(_year, _month, 5),
+      initialDate: _startDate,
       firstDate: DateTime(2020),
-      lastDate: DateTime(2035),
+      lastDate: DateTime(2040),
     );
-    if (picked != null) setState(() => _dueDate = picked);
+    if (picked != null) setState(() => _startDate = picked);
   }
 
   void _submit(AppState state) {
@@ -119,27 +115,24 @@ class _BudgetFormScreenState extends State<BudgetFormScreen> {
       );
       return;
     }
-    final planned =
-        double.tryParse(_plannedCtrl.text.replaceAll(',', '.')) ?? 0;
-    final item = BudgetItem(
+    final debt = Debt(
       id: widget.existing?.id ?? _uuid.v4(),
-      month: _month,
-      year: _year,
+      name: _nameCtrl.text.trim(),
       category: _category!,
       subcategory: _subcategory!,
       country: _country,
-      planned: planned,
-      dueDate: _dueDate,
-      priority: _priority,
+      totalAmount: double.tryParse(_totalCtrl.text.replaceAll(',', '.')) ?? 0,
+      startDate: _startDate,
+      months: int.tryParse(_monthsCtrl.text) ?? 1,
+      paidAmount: widget.existing?.paidAmount ?? 0,
       description: _descCtrl.text.trim(),
-      method: _method,
     );
     if (widget.existing != null) {
-      state.updateBudget(item);
+      state.updateDebt(debt);
     } else {
-      state.addBudget(item);
+      state.addDebt(debt);
     }
-    Navigator.of(context).pop(item);
+    Navigator.of(context).pop();
   }
 
   @override
@@ -154,49 +147,68 @@ class _BudgetFormScreenState extends State<BudgetFormScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(
-          widget.existing != null
-              ? 'Editar presupuesto'
-              : 'Nuevo ítem de presupuesto',
-        ),
+        title: Text(widget.existing != null ? 'Editar deuda' : 'Nueva deuda'),
       ),
       body: Form(
         key: _formKey,
         child: ListView(
           padding: const EdgeInsets.all(AppSpacing.lg),
           children: [
-            Row(
-              children: [
-                Expanded(
-                  child: DropdownButtonFormField<int>(
-                    initialValue: _month,
-                    decoration: const InputDecoration(labelText: 'Mes'),
-                    items: List.generate(12, (i) => i + 1)
-                        .map(
-                          (m) => DropdownMenuItem(
-                            value: m,
-                            child: Text(monthNamesEs[m]),
-                          ),
-                        )
-                        .toList(),
-                    onChanged: (v) => setState(() => _month = v!),
-                  ),
-                ),
-                const SizedBox(width: AppSpacing.md),
-                Expanded(
-                  child: DropdownButtonFormField<int>(
-                    initialValue: _year,
-                    decoration: const InputDecoration(labelText: 'Año'),
-                    items: List.generate(9, (i) => DateTime.now().year - 2 + i)
-                        .map(
-                          (y) => DropdownMenuItem(value: y, child: Text('$y')),
-                        )
-                        .toList(),
-                    onChanged: (v) => setState(() => _year = v!),
-                  ),
-                ),
-              ],
+            TextFormField(
+              controller: _nameCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Nombre de la deuda',
+              ),
+              validator: (v) =>
+                  (v == null || v.trim().isEmpty) ? 'Ingresa un nombre' : null,
             ),
+            const SizedBox(height: AppSpacing.md),
+            TextFormField(
+              controller: _totalCtrl,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              decoration: const InputDecoration(
+                labelText: 'Valor total (USD)',
+                prefixText: '\$ ',
+              ),
+              validator: (v) {
+                if (v == null || v.trim().isEmpty) return 'Ingresa un valor';
+                if (double.tryParse(v.replaceAll(',', '.')) == null)
+                  return 'Valor inválido';
+                return null;
+              },
+            ),
+            const SizedBox(height: AppSpacing.md),
+            InkWell(
+              onTap: _pickStartDate,
+              child: InputDecorator(
+                decoration: const InputDecoration(labelText: 'Fecha inicial'),
+                child: Row(
+                  children: [
+                    Text(formatFullDate(_startDate)),
+                    const Spacer(),
+                    const Icon(Icons.calendar_today_rounded, size: 18),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: AppSpacing.md),
+            TextFormField(
+              controller: _monthsCtrl,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(labelText: 'Cantidad de meses'),
+              validator: (v) {
+                if (v == null || v.trim().isEmpty)
+                  return 'Ingresa la cantidad de meses';
+                final n = int.tryParse(v);
+                if (n == null || n < 1) return 'Cantidad inválida';
+                return null;
+              },
+            ),
+            const SizedBox(height: AppSpacing.md),
+            if (_previewTotal > 0)
+              _MonthlyInstallmentPreviewCard(value: _monthlyInstallmentPreview),
             const SizedBox(height: AppSpacing.md),
             Row(
               children: [
@@ -305,70 +317,6 @@ class _BudgetFormScreenState extends State<BudgetFormScreen> {
             ),
             const SizedBox(height: AppSpacing.md),
             TextFormField(
-              controller: _plannedCtrl,
-              keyboardType: const TextInputType.numberWithOptions(
-                decimal: true,
-              ),
-              decoration: const InputDecoration(
-                labelText: 'Valor planificado (USD)',
-                prefixText: '\$ ',
-              ),
-              validator: (v) {
-                if (v == null || v.trim().isEmpty) return 'Ingresa un valor';
-                if (double.tryParse(v.replaceAll(',', '.')) == null)
-                  return 'Valor inválido';
-                return null;
-              },
-            ),
-            const SizedBox(height: AppSpacing.md),
-            InkWell(
-              onTap: _pickDueDate,
-              child: InputDecorator(
-                decoration: const InputDecoration(
-                  labelText: 'Vencimiento (opcional)',
-                ),
-                child: Row(
-                  children: [
-                    Text(
-                      _dueDate != null
-                          ? formatFullDate(_dueDate!)
-                          : 'Sin definir',
-                    ),
-                    const Spacer(),
-                    const Icon(Icons.calendar_today_rounded, size: 18),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: AppSpacing.md),
-            const Text(
-              'Prioridad',
-              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            Wrap(
-              spacing: AppSpacing.sm,
-              children: Priority.values
-                  .map(
-                    (p) => ChoiceChip(
-                      label: Text(p.label),
-                      selected: _priority == p,
-                      onSelected: (_) => setState(() => _priority = p),
-                    ),
-                  )
-                  .toList(),
-            ),
-            const SizedBox(height: AppSpacing.md),
-            DropdownButtonFormField<PaymentMethod>(
-              initialValue: _method,
-              decoration: const InputDecoration(labelText: 'Método de pago'),
-              items: PaymentMethod.values
-                  .map((m) => DropdownMenuItem(value: m, child: Text(m.label)))
-                  .toList(),
-              onChanged: (v) => setState(() => _method = v!),
-            ),
-            const SizedBox(height: AppSpacing.md),
-            TextFormField(
               controller: _descCtrl,
               maxLines: 3,
               decoration: const InputDecoration(
@@ -383,7 +331,7 @@ class _BudgetFormScreenState extends State<BudgetFormScreen> {
                   Expanded(
                     child: OutlinedButton.icon(
                       onPressed: () {
-                        state.deleteBudget(widget.existing!.id);
+                        state.deleteDebt(widget.existing!.id);
                         Navigator.of(context).pop();
                       },
                       icon: const Icon(
@@ -404,7 +352,7 @@ class _BudgetFormScreenState extends State<BudgetFormScreen> {
                     child: Text(
                       widget.existing != null
                           ? 'Guardar cambios'
-                          : 'Agregar al presupuesto',
+                          : 'Crear deuda',
                     ),
                   ),
                 ),
@@ -412,6 +360,53 @@ class _BudgetFormScreenState extends State<BudgetFormScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _MonthlyInstallmentPreviewCard extends StatelessWidget {
+  final double value;
+  const _MonthlyInstallmentPreviewCard({required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(AppSpacing.lg),
+      decoration: BoxDecoration(
+        color: AppColors.deuda.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.deuda.withValues(alpha: 0.35)),
+      ),
+      child: Row(
+        children: [
+          const Icon(
+            Icons.calculate_outlined,
+            color: AppColors.deuda,
+            size: 22,
+          ),
+          const SizedBox(width: AppSpacing.md),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Cuota mensual calculada',
+                  style: TextStyle(fontSize: 12, color: Colors.white70),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  formatUsd(value, decimals: false),
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w700,
+                    color: AppColors.deuda,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

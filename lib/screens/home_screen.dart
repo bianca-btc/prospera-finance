@@ -2,9 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../state/app_state.dart';
+import '../theme/app_theme.dart';
 import '../widgets/app_logo.dart';
 import '../widgets/kpi_header.dart';
-import '../widgets/period_selector.dart';
 import 'resumen_screen.dart';
 import 'transacciones_screen.dart';
 import 'planificacion_screen.dart';
@@ -20,6 +20,10 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   int _tab = 0;
+  // Cuando está activo, los KPIs se muestran en una versión reducida para
+  // dejar más espacio en pantalla a los listados (Resumen/Transacciones/
+  // Planificación/Análisis).
+  bool _focusOnList = false;
 
   final _pages = const [
     ResumenScreen(),
@@ -45,6 +49,11 @@ class _HomeScreenState extends State<HomeScreen> {
           ],
         ),
         actions: [
+          _FocusToggleButton(
+            active: _focusOnList,
+            onTap: () => setState(() => _focusOnList = !_focusOnList),
+          ),
+          const SizedBox(width: 4),
           IconButton(
             tooltip: 'Ajustes',
             icon: const Icon(Icons.settings_outlined),
@@ -66,9 +75,14 @@ class _HomeScreenState extends State<HomeScreen> {
       body: Column(
         children: [
           const SizedBox(height: 4),
-          const PeriodSelector(),
-          const SizedBox(height: 8),
-          const KpiHeader(),
+          // El selector de período ahora comparte la misma fila que los
+          // KPIs de Ingresos/Gastos/Inversiones (ver KpiHeader), para no
+          // ocupar una línea completa solo para el filtro.
+          KpiHeader(
+            compact: _focusOnList,
+            onGastosTap: () => setState(() => _tab = 2),
+            onInversionesTap: () => setState(() => _tab = 2),
+          ),
           const SizedBox(height: 4),
           const Divider(height: 1),
           Expanded(child: _pages[_tab]),
@@ -99,6 +113,48 @@ class _HomeScreenState extends State<HomeScreen> {
             label: 'Análisis',
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Botón que alterna el modo "enfocar listado" (KPIs reducidos, más
+/// espacio para las listas de Resumen/Transacciones/Planificación/Análisis).
+class _FocusToggleButton extends StatelessWidget {
+  final bool active;
+  final VoidCallback onTap;
+  const _FocusToggleButton({required this.active, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: active
+          ? 'Mostrar KPIs completos'
+          : 'Enfocar listado (reducir KPIs)',
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: active
+                ? AppColors.brandAmber.withValues(alpha: 0.18)
+                : null,
+            border: Border.all(
+              color: active
+                  ? AppColors.brandAmber
+                  : AppColors.darkBorder,
+            ),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Icon(
+            active
+                ? Icons.fullscreen_exit_rounded
+                : Icons.fullscreen_rounded,
+            size: 18,
+            color: active ? AppColors.brandAmber : null,
+          ),
+        ),
       ),
     );
   }

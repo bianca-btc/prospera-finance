@@ -16,7 +16,13 @@ class ManageTaxonomyScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
-    final cats = isExpense ? state.expenseCategories : state.incomeCategories;
+    final cats =
+        List<CategoryDef>.from(
+          isExpense ? state.expenseCategories : state.incomeCategories,
+        )..sort((a, b) {
+          if (a.isCustom != b.isCustom) return a.isCustom ? 1 : -1;
+          return a.name.compareTo(b.name);
+        });
 
     return Scaffold(
       appBar: AppBar(
@@ -61,7 +67,7 @@ class ManageTaxonomyScreen extends StatelessWidget {
                 size: 34,
               ),
               title: Text(
-                cat.name,
+                cat.isCustom ? cat.name : '${cat.name} *',
                 style: const TextStyle(fontWeight: FontWeight.w600),
               ),
               trailing: IconButton(

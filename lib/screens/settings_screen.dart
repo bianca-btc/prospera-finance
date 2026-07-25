@@ -2,12 +2,18 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
+import 'package:uuid/uuid.dart';
 
+import '../models/collaborator.dart';
+import '../models/enums.dart';
+import '../services/export_import_service.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_logo.dart';
 import '../widgets/common.dart';
 import 'manage_taxonomy_screen.dart';
+
+const _uuid = Uuid();
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
@@ -38,7 +44,7 @@ class SettingsScreen extends StatelessWidget {
                   ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w700),
                 ),
                 Text(
-                  'Control financiero personal',
+                  'Asistente financiero personal',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               ],
@@ -57,6 +63,9 @@ class SettingsScreen extends StatelessWidget {
               onChanged: (_) => state.toggleTheme(),
             ),
           ),
+          const SizedBox(height: AppSpacing.xl),
+          SectionTitle(title: 'Personalización del Resumen'),
+          SectionCard(child: _CardVisibilitySection(state: state)),
           const SizedBox(height: AppSpacing.xl),
           SectionTitle(title: 'Categorías y ubicaciones'),
           SectionCard(
@@ -115,13 +124,50 @@ class SettingsScreen extends StatelessWidget {
           SectionTitle(title: 'Seguridad'),
           SectionCard(child: _PinSection(state: state)),
           const SizedBox(height: AppSpacing.xl),
-          SectionTitle(title: 'Acceso compartido'),
+          SectionTitle(title: 'Compartir acceso'),
           SectionCard(child: _ShareSection(state: state)),
           const SizedBox(height: AppSpacing.xl),
           SectionTitle(title: 'Datos'),
           SectionCard(child: _DataSection(state: state)),
         ],
       ),
+    );
+  }
+}
+
+/// Personalização: o usuário escolhe quais cards aparecem no Resumen.
+class _CardVisibilitySection extends StatelessWidget {
+  final AppState state;
+  const _CardVisibilitySection({required this.state});
+
+  String _labelFor(String key) {
+    switch (key) {
+      case 'resumo_inteligente':
+        return 'Resumen inteligente';
+      case 'principales_gastos':
+        return 'Principales gastos';
+      case 'proximos_vencimientos':
+        return 'Próximos vencimientos';
+      case 'objetivos':
+        return 'Objetivos financieros';
+      default:
+        return key;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: allResumenCardKeys
+          .map(
+            (key) => SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(_labelFor(key)),
+              value: state.visibleCards.contains(key),
+              onChanged: (_) => state.toggleCardVisible(key),
+            ),
+          )
+          .toList(),
     );
   }
 }
@@ -195,6 +241,9 @@ class _PinSection extends StatelessWidget {
   }
 }
 
+/// Compartilhamento com 3 níveis de acesso (Propietario/Editor/Visualizador),
+/// via convite (nombre+email) ou enlace seguro — todos trabajan sobre la
+/// misma base de datos.
 class _ShareSection extends StatelessWidget {
   final AppState state;
   const _ShareSection({required this.state});
@@ -206,9 +255,7 @@ class _ShareSection extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          'Genera un enlace exclusivo para dar acceso a otra persona a tus datos de Prospera. '
-          'Por ahora el enlace queda registrado localmente como identificador de autorización; '
-          'la sincronización remota entre dispositivos estará disponible cuando se conecte un backend.',
+          'Comparte tu base de datos con otras personas, definiendo su nivel de acceso.',
           style: TextStyle(
             fontSize: 12.5,
             color: Theme.of(context).textTheme.bodySmall?.color,
@@ -255,7 +302,7 @@ class _ShareSection extends StatelessWidget {
           TextButton(
             onPressed: () => state.revokeShareLink(),
             child: const Text(
-              'Revocar acceso',
+              'Revocar enlace',
               style: TextStyle(color: AppColors.gasto),
             ),
           ),
@@ -263,13 +310,177 @@ class _ShareSection extends StatelessWidget {
           ElevatedButton.icon(
             onPressed: () => state.generateShareLink(),
             icon: const Icon(Icons.link_rounded),
-            label: const Text('Generar enlace de acceso'),
+            label: const Text('Generar enlace seguro'),
           ),
+        const SizedBox(height: AppSpacing.lg),
+        const Divider(),
+        const SizedBox(height: AppSpacing.sm),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              'Colaboradores',
+              style: Theme.of(
+                context,
+              ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
+            ),
+            TextButton.icon(
+              onPressed: () => _inviteDialog(context),
+              icon: const Icon(Icons.person_add_alt_rounded, size: 16),
+              label: const Text('Invitar'),
+            ),
+          ],
+        ),
+        if (state.collaborators.isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+            child: Text(
+              'Aún no invitaste a ningún colaborador.',
+              style: TextStyle(
+                fontSize: 12.5,
+                color: Theme.of(context).textTheme.bodySmall?.color,
+              ),
+            ),
+          )
+        else
+          ...state.collaborators.map((c) => _CollaboratorTile(collaborator: c)),
       ],
+    );
+  }
+
+  Future<void> _inviteDialog(BuildContext context) async {
+    final nameCtrl = TextEditingController();
+    final emailCtrl = TextEditingController();
+    ShareRole role = ShareRole.visualizador;
+
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSt) => AlertDialog(
+          title: const Text('Invitar colaborador'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameCtrl,
+                decoration: const InputDecoration(labelText: 'Nombre'),
+              ),
+              const SizedBox(height: AppSpacing.md),
+              TextField(
+                controller: emailCtrl,
+                decoration: const InputDecoration(
+                  labelText: 'Correo electrónico',
+                ),
+              ),
+              const SizedBox(height: AppSpacing.md),
+              DropdownButtonFormField<ShareRole>(
+                initialValue: role,
+                decoration: const InputDecoration(labelText: 'Nivel de acceso'),
+                items: ShareRole.values
+                    .where((r) => r != ShareRole.propietario)
+                    .map(
+                      (r) => DropdownMenuItem(value: r, child: Text(r.label)),
+                    )
+                    .toList(),
+                onChanged: (v) => setSt(() => role = v!),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancelar'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Invitar'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (result == true && nameCtrl.text.trim().isNotEmpty) {
+      await state.addCollaborator(
+        Collaborator(
+          id: _uuid.v4(),
+          name: nameCtrl.text.trim(),
+          email: emailCtrl.text.trim(),
+          role: role,
+        ),
+      );
+    }
+  }
+}
+
+class _CollaboratorTile extends StatelessWidget {
+  final Collaborator collaborator;
+  const _CollaboratorTile({required this.collaborator});
+
+  @override
+  Widget build(BuildContext context) {
+    final state = context.read<AppState>();
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: CircleAvatar(
+        backgroundColor: AppColors.brandAmber.withValues(alpha: 0.2),
+        child: Text(
+          collaborator.name.isNotEmpty
+              ? collaborator.name[0].toUpperCase()
+              : '?',
+          style: const TextStyle(
+            color: AppColors.brandAmber,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ),
+      title: Text(
+        collaborator.name,
+        style: const TextStyle(fontWeight: FontWeight.w600),
+      ),
+      subtitle: Text(
+        collaborator.email,
+        style: const TextStyle(fontSize: 11.5),
+      ),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          DropdownButton<ShareRole>(
+            value: collaborator.role,
+            underline: const SizedBox.shrink(),
+            items: ShareRole.values
+                .where((r) => r != ShareRole.propietario)
+                .map(
+                  (r) => DropdownMenuItem(
+                    value: r,
+                    child: Text(
+                      r.label,
+                      style: const TextStyle(fontSize: 12.5),
+                    ),
+                  ),
+                )
+                .toList(),
+            onChanged: (r) {
+              if (r != null) state.updateCollaboratorRole(collaborator.id, r);
+            },
+          ),
+          IconButton(
+            icon: const Icon(
+              Icons.close_rounded,
+              size: 18,
+              color: AppColors.gasto,
+            ),
+            onPressed: () => state.removeCollaborator(collaborator.id),
+          ),
+        ],
+      ),
     );
   }
 }
 
+/// Exportação/importação completa (arquitetura CSV/TXT), cobrindo todas as
+/// entidades do app (Transações, Planejamento, Objetivos, Dívidas,
+/// Categorias, Subcategorias, Países, Permissões e Configurações).
 class _DataSection extends StatelessWidget {
   final AppState state;
   const _DataSection({required this.state});
@@ -279,6 +490,29 @@ class _DataSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: const Icon(
+            Icons.description_outlined,
+            color: AppColors.brandAmber,
+          ),
+          title: const Text('Exportar todo (TXT/CSV)'),
+          subtitle: const Text(
+            'Transacciones, planificación, objetivos, deudas y más',
+          ),
+          onTap: () {
+            final data = ExportImportService.fullExportTxt(state);
+            Clipboard.setData(ClipboardData(text: data));
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text(
+                  'Datos copiados al portapapeles (formato TXT/CSV)',
+                ),
+              ),
+            );
+          },
+        ),
+        const Divider(height: 1),
         ListTile(
           contentPadding: EdgeInsets.zero,
           leading: const Icon(
@@ -294,6 +528,17 @@ class _DataSection extends StatelessWidget {
               const SnackBar(content: Text('Datos copiados al portapapeles')),
             );
           },
+        ),
+        const Divider(height: 1),
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: const Icon(
+            Icons.download_outlined,
+            color: AppColors.inversion,
+          ),
+          title: const Text('Importar datos (JSON)'),
+          subtitle: const Text('Pega un backup JSON generado anteriormente'),
+          onTap: () => _importDialog(context),
         ),
         const Divider(height: 1),
         ListTile(
@@ -328,5 +573,51 @@ class _DataSection extends StatelessWidget {
         ),
       ],
     );
+  }
+
+  Future<void> _importDialog(BuildContext context) async {
+    final ctrl = TextEditingController();
+    final json = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Importar datos (JSON)'),
+        content: TextField(
+          controller: ctrl,
+          maxLines: 6,
+          decoration: const InputDecoration(
+            hintText: 'Pega aquí el JSON exportado',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, ctrl.text),
+            child: const Text('Importar'),
+          ),
+        ],
+      ),
+    );
+    if (json != null && json.trim().isNotEmpty) {
+      try {
+        final data = jsonDecode(json) as Map<String, dynamic>;
+        await state.importSnapshot(data);
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Datos importados correctamente')),
+          );
+        }
+      } catch (_) {
+        if (context.mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('JSON inválido. Verifica el contenido pegado.'),
+            ),
+          );
+        }
+      }
+    }
   }
 }

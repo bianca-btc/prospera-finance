@@ -4,122 +4,343 @@ import 'package:provider/provider.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
 import '../utils/formatters.dart';
+import 'common.dart';
+import 'period_selector.dart';
 
-/// Header com 4 KPIs fixos: Ingresos, Gastos+Deudas, Inversiones, Balance.
-/// Quando múltiplos meses estão selecionados, mostra total acumulado + média mensal.
+/// Header de KPIs, compacto: Ingresos, Gastos e Inversiones SIEMPRE en la
+/// misma fila; Saldo aparece debajo en una fila más pequeña, que indica
+/// visualmente si es positivo o negativo. Soporta un modo [compact] que
+/// reduce aún más el header (usado cuando el usuario quiere enfocarse en
+/// los listados de las pestañas).
 class KpiHeader extends StatelessWidget {
-  const KpiHeader({super.key});
+  final VoidCallback? onGastosTap;
+  final VoidCallback? onInversionesTap;
+  final bool compact;
+
+  const KpiHeader({
+    super.key,
+    this.onGastosTap,
+    this.onInversionesTap,
+    this.compact = false,
+  });
+
+  Color _levelColor(BudgetProgressLevel level) {
+    switch (level) {
+      case BudgetProgressLevel.verde:
+        return AppColors.ingreso;
+      case BudgetProgressLevel.amarillo:
+        return AppColors.warning;
+      case BudgetProgressLevel.naranja:
+        return AppColors.naranja;
+      case BudgetProgressLevel.rojo:
+        return AppColors.gasto;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
-    final periods = state.selectedPeriods;
-    final n = periods.length;
 
     final ingresos = state.totalIngresos;
     final gastos = state.totalGastosYDeudas;
     final inversiones = state.totalInversiones;
     final balance = state.balance;
-    final plannedGastos = state.plannedTotalSelected;
-    final metaInversion = state.goalsTargetTotal;
-    final investedTotal = state.goalsCurrentTotal;
+
+    final plannedGastos = state.plannedGastosSelected;
+    final gastosRatio = state.gastosExecutedRatio;
+    final gastosColor = _levelColor(state.gastosProgressLevel);
+
+    final plannedInversion = state.investmentGoalPlannedSelected;
+    final inversionRatio = state.investmentExecutedRatio;
+    final metaConcluida = state.investmentGoalCompleted;
+    final metaSuperada = state.investmentGoalExceeded;
+
+    final balanceColor = balance >= 0 ? AppColors.ingreso : AppColors.gasto;
+
+    if (compact) {
+      // Modo compacto: una sola fila resumida (usada al "enfocar listados").
+      return Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.lg,
+          vertical: 6,
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: _CompactStat(
+                label: 'Ingresos',
+                value: formatUsd(ingresos, decimals: false),
+                color: AppColors.ingreso,
+              ),
+            ),
+            Expanded(
+              child: _CompactStat(
+                label: 'Gastos',
+                value: formatUsd(gastos, decimals: false),
+                color: AppColors.gasto,
+              ),
+            ),
+            Expanded(
+              child: _CompactStat(
+                label: 'Inversiones',
+                value: formatUsd(inversiones, decimals: false),
+                color: AppColors.inversion,
+              ),
+            ),
+            Expanded(
+              child: _CompactStat(
+                label: 'Saldo',
+                value: formatUsdSigned(balance),
+                color: balanceColor,
+              ),
+            ),
+            const SizedBox(width: 6),
+            const PeriodSelector(compactHeader: true),
+          ],
+        ),
+      );
+    }
 
     return Padding(
       padding: const EdgeInsets.symmetric(
         horizontal: AppSpacing.lg,
-        vertical: AppSpacing.sm,
+        vertical: AppSpacing.xs,
       ),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final isNarrow = constraints.maxWidth < 420;
-          final children = [
-            _KpiCard(
-              label: 'Ingresos',
-              value: formatUsd(ingresos),
-              sub: n > 1 ? 'Prom. ${formatUsd(ingresos / n)}/mes' : null,
-              color: AppColors.ingreso,
-              icon: Icons.arrow_downward_rounded,
-            ),
-            _KpiCard(
-              label: 'Gastos + Deudas',
-              value: formatUsd(gastos),
-              sub:
-                  '${formatUsd(gastos, decimals: false)} de ${formatUsd(plannedGastos, decimals: false)} planificado',
-              color: AppColors.gasto,
-              icon: Icons.arrow_upward_rounded,
-            ),
-            _KpiCard(
-              label: 'Inversiones',
-              value: formatUsd(inversiones),
-              sub:
-                  '${formatUsd(investedTotal, decimals: false)} de ${formatUsd(metaInversion, decimals: false)} meta',
-              color: AppColors.inversion,
-              icon: Icons.trending_up_rounded,
-            ),
-            _KpiCard(
-              label: 'Balance',
-              value: formatUsdSigned(balance),
-              sub: balance >= 0 ? 'Excedente' : 'Déficit',
-              color: balance >= 0 ? AppColors.ingreso : AppColors.gasto,
-              icon: balance >= 0
-                  ? Icons.check_circle_outline_rounded
-                  : Icons.warning_amber_rounded,
-            ),
-          ];
-
-          if (isNarrow) {
-            return GridView.count(
-              crossAxisCount: 2,
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              mainAxisSpacing: AppSpacing.sm,
-              crossAxisSpacing: AppSpacing.sm,
-              childAspectRatio: 1.5,
-              children: children,
-            );
-          }
-          return Row(
-            children: children
-                .map(
-                  (c) => Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 4),
-                      child: c,
-                    ),
+      child: Column(
+        children: [
+          // Ingresos, Gastos e Inversiones SIEMPRE en la misma fila, con el
+          // selector de período compartiendo esa misma línea (lado derecho)
+          // para no ocupar una fila entera solo para el filtro.
+          IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(
+                  child: _KpiCard(
+                    label: 'Ingresos',
+                    value: formatUsd(ingresos, decimals: false),
+                    color: AppColors.ingreso,
                   ),
-                )
-                .toList(),
-          );
-        },
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: _KpiCard(
+                    label: 'Gastos',
+                    value: formatUsd(gastos, decimals: false),
+                    color: AppColors.gasto,
+                    onTap: onGastosTap,
+                    progress: plannedGastos > 0
+                        ? _KpiProgress(
+                            ratio: gastosRatio,
+                            color: gastosColor,
+                            caption:
+                                '${formatUsd(gastos, decimals: false)}/${formatUsd(plannedGastos, decimals: false)}',
+                          )
+                        : null,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: _KpiCard(
+                    label: 'Inversiones',
+                    value: formatUsd(inversiones, decimals: false),
+                    color: AppColors.inversion,
+                    onTap: onInversionesTap,
+                    progress: plannedInversion > 0
+                        ? _KpiProgress(
+                            ratio: inversionRatio,
+                            color: metaSuperada
+                                ? AppColors.inversion
+                                : (metaConcluida
+                                      ? AppColors.ingreso
+                                      : AppColors.inversion),
+                            caption: metaSuperada
+                                ? 'Meta superada'
+                                : metaConcluida
+                                    ? 'Meta concluída'
+                                    : '${formatUsd(inversiones, decimals: false)}/${formatUsd(plannedInversion, decimals: false)}',
+                            captionBold: metaConcluida || metaSuperada,
+                          )
+                        : null,
+                  ),
+                ),
+                const SizedBox(width: 6),
+                const PeriodSelector(compactHeader: true),
+              ],
+            ),
+          ),
+          const SizedBox(height: 6),
+          // Saldo: fila propia, con estilo visualmente distinto (diagonal /
+          // pastilla) de los 3 KPIs de arriba, número a la izquierda y clara
+          // indicación pos/neg mediante color e ícono.
+          _SaldoRow(balance: balance, color: balanceColor),
+        ],
       ),
     );
   }
 }
 
-class _KpiCard extends StatelessWidget {
+/// Fila compacta y claramente diferenciada para el Saldo: a diferencia de
+/// los 3 cards de KPI (rectángulos con etiqueta arriba y valor abajo), acá
+/// usamos un ícono circular "de estado" a la izquierda seguido del NÚMERO
+/// (también a la izquierda), y la etiqueta "Saldo" pasa a un segundo plano
+/// a la derecha — reforzando que se trata de un resultado (diferencia),
+/// no de una métrica más de la misma familia.
+class _SaldoRow extends StatelessWidget {
+  final double balance;
+  final Color color;
+  const _SaldoRow({required this.balance, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    final isPositive = balance >= 0;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.md,
+        vertical: 8,
+      ),
+      decoration: BoxDecoration(
+        // Gradiente sutil (en vez del fondo plano de los KPI cards) para
+        // diferenciar visualmente esta fila como "resultado" y no como un
+        // cuarto KPI más.
+        gradient: LinearGradient(
+          colors: [color.withValues(alpha: 0.16), color.withValues(alpha: 0.05)],
+          begin: Alignment.centerLeft,
+          end: Alignment.centerRight,
+        ),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: color.withValues(alpha: 0.35), width: 1.2),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 26,
+            height: 26,
+            decoration: BoxDecoration(shape: BoxShape.circle, color: color),
+            child: Icon(
+              isPositive
+                  ? Icons.arrow_upward_rounded
+                  : Icons.arrow_downward_rounded,
+              size: 15,
+              color: Colors.white,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            formatUsdSigned(balance),
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w800,
+              color: color,
+              fontFeatures: const [FontFeature.tabularFigures()],
+            ),
+          ),
+          const Spacer(),
+          Text(
+            isPositive ? 'Saldo positivo' : 'Saldo negativo',
+            style: TextStyle(
+              fontSize: 10.5,
+              fontWeight: FontWeight.w600,
+              color: Theme.of(
+                context,
+              ).textTheme.bodySmall?.color?.withValues(alpha: 0.75),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Estadística compacta (modo colapsado): solo etiqueta + valor.
+class _CompactStat extends StatelessWidget {
   final String label;
   final String value;
-  final String? sub;
   final Color color;
-  final IconData icon;
-
-  const _KpiCard({
+  const _CompactStat({
     required this.label,
     required this.value,
-    this.sub,
     required this.color,
-    required this.icon,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(AppSpacing.md),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            fontSize: 10,
+            color: Theme.of(
+              context,
+            ).textTheme.bodySmall?.color?.withValues(alpha: 0.7),
+          ),
+          overflow: TextOverflow.ellipsis,
+        ),
+        Text(
+          value,
+          style: TextStyle(
+            fontSize: 12.5,
+            fontWeight: FontWeight.w700,
+            color: color,
+          ),
+          overflow: TextOverflow.ellipsis,
+        ),
+      ],
+    );
+  }
+}
+
+/// Dados da barra de progresso exibida dentro de um [_KpiCard].
+class _KpiProgress {
+  final double ratio; // 0..N (pode passar de 1 = excesso)
+  final Color color;
+  final String caption;
+  final bool captionBold;
+
+  const _KpiProgress({
+    required this.ratio,
+    required this.color,
+    required this.caption,
+    this.captionBold = false,
+  });
+}
+
+class _KpiCard extends StatelessWidget {
+  final String label;
+  final String value;
+  final Color color;
+  final bool emphasis;
+  final VoidCallback? onTap;
+  final _KpiProgress? progress;
+
+  const _KpiCard({
+    required this.label,
+    required this.value,
+    required this.color,
+    this.emphasis = false,
+    this.onTap,
+    this.progress,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final content = Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.sm,
+        vertical: 8,
+      ),
       decoration: BoxDecoration(
-        color: Theme.of(context).cardTheme.color,
-        borderRadius: BorderRadius.circular(12),
+        color: emphasis
+            ? color.withValues(alpha: 0.10)
+            : Theme.of(context).cardTheme.color,
+        borderRadius: BorderRadius.circular(10),
         border: Border.all(
-          color: Theme.of(context).dividerTheme.color ?? Colors.transparent,
+          color: emphasis
+              ? color.withValues(alpha: 0.35)
+              : (Theme.of(context).dividerTheme.color ?? Colors.transparent),
         ),
       ),
       child: Column(
@@ -128,13 +349,11 @@ class _KpiCard extends StatelessWidget {
         children: [
           Row(
             children: [
-              Icon(icon, size: 14, color: color),
-              const SizedBox(width: 4),
               Expanded(
                 child: Text(
                   label,
                   style: TextStyle(
-                    fontSize: 11.5,
+                    fontSize: 10.5,
                     color: Theme.of(
                       context,
                     ).textTheme.bodySmall?.color?.withValues(alpha: 0.7),
@@ -142,36 +361,66 @@ class _KpiCard extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
+              if (onTap != null)
+                Icon(
+                  Icons.chevron_right_rounded,
+                  size: 14,
+                  color: Theme.of(
+                    context,
+                  ).textTheme.bodySmall?.color?.withValues(alpha: 0.4),
+                ),
             ],
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 3),
           FittedBox(
             fit: BoxFit.scaleDown,
             alignment: Alignment.centerLeft,
             child: Text(
               value,
               style: TextStyle(
-                fontSize: 18,
+                fontSize: 15,
                 fontWeight: FontWeight.w700,
                 color: color,
                 fontFeatures: const [FontFeature.tabularFigures()],
               ),
             ),
           ),
-          if (sub != null) ...[
-            const SizedBox(height: 2),
+          if (progress != null) ...[
+            const SizedBox(height: 5),
+            ProgressBarWithOverflow(
+              value: progress!.ratio,
+              color: progress!.color,
+              height: 5,
+            ),
+            const SizedBox(height: 3),
             Text(
-              sub!,
+              progress!.caption,
               style: TextStyle(
-                fontSize: 10.5,
-                color: Theme.of(
-                  context,
-                ).textTheme.bodySmall?.color?.withValues(alpha: 0.55),
+                fontSize: 9,
+                fontWeight: progress!.captionBold
+                    ? FontWeight.w700
+                    : FontWeight.w500,
+                color: progress!.captionBold
+                    ? progress!.color
+                    : Theme.of(
+                        context,
+                      ).textTheme.bodySmall?.color?.withValues(alpha: 0.65),
               ),
               overflow: TextOverflow.ellipsis,
             ),
           ],
         ],
+      ),
+    );
+
+    if (onTap == null) return content;
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(10),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: onTap,
+        child: content,
       ),
     );
   }

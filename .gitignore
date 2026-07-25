@@ -14,3 +14,8 @@ release-key.jks
 *.iml
 .idea/
 .vscode/
+*.log
+server.log
+build.log
+flutter.log
+flutter2.log

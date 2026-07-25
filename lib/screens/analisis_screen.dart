@@ -3,23 +3,18 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../models/enums.dart';
+import '../models/taxonomy.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
 import '../utils/formatters.dart';
 import '../utils/period.dart';
 import '../widgets/common.dart';
 
-class AnalisisScreen extends StatefulWidget {
+/// Aba Análisis: responde apenas duas perguntas ("¿Dónde gasto más?" y
+/// "¿Dónde gasto más por país?"), seguidas de un resumen automático con
+/// lenguaje de tendencia. Sin exceso de filtros ni gráficos.
+class AnalisisScreen extends StatelessWidget {
   const AnalisisScreen({super.key});
-
-  @override
-  State<AnalisisScreen> createState() => _AnalisisScreenState();
-}
-
-class _AnalisisScreenState extends State<AnalisisScreen> {
-  Set<String> _catFilter = {};
-  Set<String> _countryFilter = {};
-  TxNature? _naturaleza;
 
   static const _palette = [
     Color(0xFFFF5252),
@@ -35,24 +30,13 @@ class _AnalisisScreenState extends State<AnalisisScreen> {
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
-    // Análisis considera os meses selecionados no topo, mas com filtros próprios.
-    final periods = state.selectedPeriods;
-    var txns = state
-        .txnsForPeriods(periods)
+    final range = state.selectedRange;
+    final txns = state
+        .txnsForRange(range)
         .where((t) => t.type == TxType.gasto || t.type == TxType.deuda)
         .toList();
 
-    if (_catFilter.isNotEmpty)
-      txns = txns.where((t) => _catFilter.contains(t.category)).toList();
-    if (_countryFilter.isNotEmpty)
-      txns = txns.where((t) => _countryFilter.contains(t.country)).toList();
-    if (_naturaleza != null)
-      txns = txns.where((t) => t.nature == _naturaleza).toList();
-
-    final allCategories = txns.map((t) => t.category).toSet().toList();
-    final allCountries = state.countries;
-
-    // Gráfico 1: gastos por categoria
+    // Gráfico 1: gastos por categoría (mayor a menor).
     final Map<String, double> byCategory = {};
     for (final t in txns) {
       byCategory[t.category] = (byCategory[t.category] ?? 0) + t.amount;
@@ -61,7 +45,7 @@ class _AnalisisScreenState extends State<AnalisisScreen> {
       ..sort((a, b) => b.value.compareTo(a.value));
     final totalGastos = byCategory.values.fold(0.0, (s, v) => s + v);
 
-    // Gráfico 2: gastos por categoria e país
+    // Gráfico 2: gastos por categoría y país.
     final Map<String, Map<String, double>> byCategoryCountry = {};
     for (final t in txns) {
       byCategoryCountry.putIfAbsent(t.category, () => {});
@@ -69,9 +53,6 @@ class _AnalisisScreenState extends State<AnalisisScreen> {
           (byCategoryCountry[t.category]![t.country] ?? 0) + t.amount;
     }
     final countriesInData = txns.map((t) => t.country).toSet().toList();
-
-    // Evolução mensal (ingresos vs gastos vs inversiones)
-    final sortedPeriods = periods.toList()..sort();
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(
@@ -81,21 +62,7 @@ class _AnalisisScreenState extends State<AnalisisScreen> {
         AppSpacing.xxxl,
       ),
       children: [
-        SectionTitle(title: 'Filtros'),
-        _FiltersRow(
-          categories: allCategories.isEmpty
-              ? byCategory.keys.toList()
-              : state.expenseCategories.map((c) => c.name).toList(),
-          countries: allCountries,
-          selectedCats: _catFilter,
-          selectedCountries: _countryFilter,
-          naturaleza: _naturaleza,
-          onCatsChanged: (v) => setState(() => _catFilter = v),
-          onCountriesChanged: (v) => setState(() => _countryFilter = v),
-          onNaturalezaChanged: (v) => setState(() => _naturaleza = v),
-        ),
-        const SizedBox(height: AppSpacing.xl),
-        SectionTitle(title: 'Gastos por categoría'),
+        SectionTitle(title: '¿Dónde gasto más?'),
         SectionCard(
           child: sortedCats.isEmpty
               ? const SizedBox(
@@ -104,30 +71,127 @@ class _AnalisisScreenState extends State<AnalisisScreen> {
                 )
               : Column(
                   children: [
-                    SizedBox(
-                      height: 200,
-                      child: PieChart(
-                        PieChartData(
-                          sectionsSpace: 2,
-                          centerSpaceRadius: 42,
-                          sections: List.generate(sortedCats.length, (i) {
-                            final e = sortedCats[i];
-                            final pct = totalGastos <= 0
-                                ? 0
-                                : (e.value / totalGastos * 100);
-                            return PieChartSectionData(
-                              value: e.value,
-                              color: _palette[i % _palette.length],
-                              title: '${pct.toStringAsFixed(0)}%',
-                              radius: 60,
-                              titleStyle: const TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w700,
-                                color: Colors.white,
+                    // Gráfico de barras (valores absolutos por categoría) y
+                    // gráfico de pizza (mismos datos en %) lado a lado, para
+                    // comparar magnitud y proporción de un solo vistazo.
+                    IntrinsicHeight(
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            flex: 3,
+                            child: SizedBox(
+                              height: 190,
+                              child: BarChart(
+                                BarChartData(
+                                  alignment: BarChartAlignment.spaceAround,
+                                  maxY:
+                                      (sortedCats.isEmpty
+                                          ? 10
+                                          : sortedCats.first.value * 1.2 + 5),
+                                  barTouchData: BarTouchData(enabled: true),
+                                  titlesData: FlTitlesData(
+                                    leftTitles: const AxisTitles(
+                                      sideTitles: SideTitles(
+                                        showTitles: true,
+                                        reservedSize: 34,
+                                      ),
+                                    ),
+                                    rightTitles: const AxisTitles(
+                                      sideTitles: SideTitles(showTitles: false),
+                                    ),
+                                    topTitles: const AxisTitles(
+                                      sideTitles: SideTitles(showTitles: false),
+                                    ),
+                                    bottomTitles: AxisTitles(
+                                      sideTitles: SideTitles(
+                                        showTitles: true,
+                                        reservedSize: 28,
+                                        getTitlesWidget: (value, meta) {
+                                          final idx = value.toInt();
+                                          if (idx < 0 ||
+                                              idx >= sortedCats.length) {
+                                            return const SizedBox.shrink();
+                                          }
+                                          final name = sortedCats[idx].key;
+                                          final short = name.length > 6
+                                              ? '${name.substring(0, 6)}…'
+                                              : name;
+                                          return Padding(
+                                            padding: const EdgeInsets.only(
+                                              top: 6,
+                                            ),
+                                            child: Text(
+                                              short,
+                                              style: const TextStyle(
+                                                fontSize: 8.5,
+                                              ),
+                                            ),
+                                          );
+                                        },
+                                      ),
+                                    ),
+                                  ),
+                                  gridData: const FlGridData(
+                                    show: true,
+                                    drawVerticalLine: false,
+                                  ),
+                                  borderData: FlBorderData(show: false),
+                                  barGroups: List.generate(sortedCats.length, (
+                                    i,
+                                  ) {
+                                    final e = sortedCats[i];
+                                    return BarChartGroupData(
+                                      x: i,
+                                      barRods: [
+                                        BarChartRodData(
+                                          toY: e.value,
+                                          color: _palette[i % _palette.length],
+                                          width: 14,
+                                          borderRadius: BorderRadius.circular(
+                                            3,
+                                          ),
+                                        ),
+                                      ],
+                                    );
+                                  }),
+                                ),
                               ),
-                            );
-                          }),
-                        ),
+                            ),
+                          ),
+                          const SizedBox(width: AppSpacing.sm),
+                          Expanded(
+                            flex: 2,
+                            child: SizedBox(
+                              height: 160,
+                              child: PieChart(
+                                PieChartData(
+                                  sectionsSpace: 2,
+                                  centerSpaceRadius: 30,
+                                  sections: List.generate(sortedCats.length, (
+                                    i,
+                                  ) {
+                                    final e = sortedCats[i];
+                                    final pct = totalGastos <= 0
+                                        ? 0
+                                        : (e.value / totalGastos * 100);
+                                    return PieChartSectionData(
+                                      value: e.value,
+                                      color: _palette[i % _palette.length],
+                                      title: '${pct.toStringAsFixed(0)}%',
+                                      radius: 46,
+                                      titleStyle: const TextStyle(
+                                        fontSize: 9.5,
+                                        fontWeight: FontWeight.w700,
+                                        color: Colors.white,
+                                      ),
+                                    );
+                                  }),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                     const SizedBox(height: AppSpacing.md),
@@ -167,7 +231,7 @@ class _AnalisisScreenState extends State<AnalisisScreen> {
                 ),
         ),
         const SizedBox(height: AppSpacing.xl),
-        SectionTitle(title: 'Gastos por categoría y país'),
+        SectionTitle(title: '¿Dónde gasto más por país?'),
         SectionCard(
           child: byCategoryCountry.isEmpty
               ? const SizedBox(
@@ -269,137 +333,13 @@ class _AnalisisScreenState extends State<AnalisisScreen> {
           ),
         ],
         const SizedBox(height: AppSpacing.xl),
-        SectionTitle(title: 'Resumen automático'),
+        SectionTitle(title: 'Resumen'),
         SectionCard(
           child: _AutoSummary(
             state: state,
-            periods: sortedPeriods,
+            range: range,
             byCategory: byCategory,
           ),
-        ),
-        const SizedBox(height: AppSpacing.xl),
-        SectionTitle(title: 'Evolución mensual'),
-        SectionCard(
-          child: sortedPeriods.length < 2
-              ? const SizedBox(
-                  height: 100,
-                  child: Center(
-                    child: Text(
-                      'Selecciona al menos 2 meses para ver la evolución.',
-                    ),
-                  ),
-                )
-              : SizedBox(
-                  height: 220,
-                  child: _EvolutionChart(state: state, periods: sortedPeriods),
-                ),
-        ),
-      ],
-    );
-  }
-}
-
-class _FiltersRow extends StatelessWidget {
-  final List<String> categories;
-  final List<String> countries;
-  final Set<String> selectedCats;
-  final Set<String> selectedCountries;
-  final TxNature? naturaleza;
-  final ValueChanged<Set<String>> onCatsChanged;
-  final ValueChanged<Set<String>> onCountriesChanged;
-  final ValueChanged<TxNature?> onNaturalezaChanged;
-
-  const _FiltersRow({
-    required this.categories,
-    required this.countries,
-    required this.selectedCats,
-    required this.selectedCountries,
-    required this.naturaleza,
-    required this.onCatsChanged,
-    required this.onCountriesChanged,
-    required this.onNaturalezaChanged,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Categoría',
-          style: TextStyle(
-            fontSize: 12,
-            color: Theme.of(context).textTheme.bodySmall?.color,
-          ),
-        ),
-        const SizedBox(height: 6),
-        Wrap(
-          spacing: 6,
-          children: categories.map((c) {
-            final sel = selectedCats.contains(c);
-            return FilterChip(
-              label: Text(c, style: const TextStyle(fontSize: 11.5)),
-              selected: sel,
-              onSelected: (_) {
-                final next = {...selectedCats};
-                sel ? next.remove(c) : next.add(c);
-                onCatsChanged(next);
-              },
-            );
-          }).toList(),
-        ),
-        const SizedBox(height: AppSpacing.md),
-        Text(
-          'País',
-          style: TextStyle(
-            fontSize: 12,
-            color: Theme.of(context).textTheme.bodySmall?.color,
-          ),
-        ),
-        const SizedBox(height: 6),
-        Wrap(
-          spacing: 6,
-          children: countries.map((c) {
-            final sel = selectedCountries.contains(c);
-            return FilterChip(
-              label: Text(c, style: const TextStyle(fontSize: 11.5)),
-              selected: sel,
-              onSelected: (_) {
-                final next = {...selectedCountries};
-                sel ? next.remove(c) : next.add(c);
-                onCountriesChanged(next);
-              },
-            );
-          }).toList(),
-        ),
-        const SizedBox(height: AppSpacing.md),
-        Text(
-          'Naturaleza',
-          style: TextStyle(
-            fontSize: 12,
-            color: Theme.of(context).textTheme.bodySmall?.color,
-          ),
-        ),
-        const SizedBox(height: 6),
-        Wrap(
-          spacing: 6,
-          children: [
-            ChoiceChip(
-              label: const Text('Todas', style: TextStyle(fontSize: 11.5)),
-              selected: naturaleza == null,
-              onSelected: (_) => onNaturalezaChanged(null),
-            ),
-            ChoiceChip(
-              label: const Text('Fijo', style: TextStyle(fontSize: 11.5)),
-              selected: naturaleza == TxNature.fijo,
-              onSelected: (_) => onNaturalezaChanged(TxNature.fijo),
-            ),
-            ChoiceChip(
-              label: const Text('Variable', style: TextStyle(fontSize: 11.5)),
-              selected: naturaleza == TxNature.variable,
-              onSelected: (_) => onNaturalezaChanged(TxNature.variable),
-            ),
-          ],
         ),
       ],
     );
@@ -408,17 +348,17 @@ class _FiltersRow extends StatelessWidget {
 
 class _AutoSummary extends StatelessWidget {
   final AppState state;
-  final List<YearMonth> periods;
+  final PeriodRange range;
   final Map<String, double> byCategory;
   const _AutoSummary({
     required this.state,
-    required this.periods,
+    required this.range,
     required this.byCategory,
   });
 
   @override
   Widget build(BuildContext context) {
-    if (byCategory.isEmpty || periods.isEmpty) {
+    if (byCategory.isEmpty) {
       return const Text(
         'No hay suficientes datos para generar un resumen automático.',
       );
@@ -429,161 +369,110 @@ class _AutoSummary extends StatelessWidget {
     final total = byCategory.values.fold(0.0, (s, v) => s + v);
     final pctTop = total <= 0 ? 0 : (top.value / total * 100);
 
-    final countriesInPeriod = state
-        .txnsForPeriods(periods.toSet())
-        .map((t) => t.country)
-        .toSet()
-        .toList();
+    final txns = state.txnsForRange(range);
+    final countriesInPeriod = txns.map((t) => t.country).toSet().toList();
     String countryPhrase = '';
     if (countriesInPeriod.length == 1) {
       countryPhrase =
           'El país con mayor concentración de gastos es ${countriesInPeriod.first}. ';
     } else if (countriesInPeriod.length > 1) {
-      countryPhrase =
-          'Se registran gastos en ${countriesInPeriod.length} países (${countriesInPeriod.join(', ')}). ';
+      // Descubre el país con mayor gasto total.
+      final Map<String, double> byCountry = {};
+      for (final t in txns.where(
+        (t) => t.type == TxType.gasto || t.type == TxType.deuda,
+      )) {
+        byCountry[t.country] = (byCountry[t.country] ?? 0) + t.amount;
+      }
+      final topCountry = byCountry.entries.toList()
+        ..sort((a, b) => b.value.compareTo(a.value));
+      if (topCountry.isNotEmpty) {
+        countryPhrase =
+            'El país con mayor volumen de gastos fue ${topCountry.first.key}. ';
+      }
     }
 
-    final n = periods.length;
-    final avgIngresos = state.totalIngresos / n;
-    final avgGastos = state.totalGastosYDeudas / n;
-    final margen = avgIngresos - avgGastos;
-    final margenPhrase = margen >= 0
-        ? 'Estás ${formatUsd(margen, decimals: false)} por encima de tus gastos en promedio mensual, lo que representa una margen saludable para invertir.'
-        : 'Estás ${formatUsd(-margen, decimals: false)} por debajo de tus ingresos en promedio mensual; conviene revisar los gastos variables.';
+    // Comparación con el período anterior equivalente (tendencia).
+    final prevTxns = state.txnsForRange(range.previousEquivalent);
+    final prevGastos = prevTxns
+        .where((t) => t.type == TxType.gasto || t.type == TxType.deuda)
+        .fold(0.0, (s, t) => s + t.amount);
+    final invActual = txns
+        .where((t) => t.type == TxType.inversion)
+        .fold(0.0, (s, t) => s + t.amount);
+    final invPrev = prevTxns
+        .where((t) => t.type == TxType.inversion)
+        .fold(0.0, (s, t) => s + t.amount);
 
-    final periodLabel = n == 1
-        ? monthLabel(periods.first)
-        : 'los últimos $n meses';
+    String growthPhrase = '';
+    if (total > 0 && prevGastos > 0) {
+      final growth = ((total - prevGastos) / prevGastos) * 100;
+      if (growth.abs() >= 3) {
+        growthPhrase = growth > 0
+            ? 'Tus gastos crecieron ${growth.toStringAsFixed(0)}% respecto al período anterior. '
+            : 'Tus gastos cayeron ${growth.abs().toStringAsFixed(0)}% respecto al período anterior. ';
+      } else {
+        growthPhrase =
+            'Tus gastos se mantuvieron estables respecto al período anterior. ';
+      }
+    }
+
+    // Evolución de las inversiones: cubre todos los escenarios posibles
+    // (primera inversión, sin inversión, crecimiento, caída o estabilidad)
+    // para que el usuario nunca tenga que interpretar el número por sí solo.
+    String invPhrase;
+    if (invActual <= 0 && invPrev <= 0) {
+      invPhrase = 'Aún no registraste inversiones en este período. ';
+    } else if (invPrev <= 0 && invActual > 0) {
+      invPhrase =
+          'Comenzaste a invertir en este período (${formatUsd(invActual, decimals: false)}), algo que no hacías en el período anterior. ';
+    } else if (invActual <= 0 && invPrev > 0) {
+      invPhrase =
+          'Dejaste de invertir en este período, después de haber invertido ${formatUsd(invPrev, decimals: false)} en el período anterior. ';
+    } else {
+      final growth = ((invActual - invPrev) / invPrev) * 100;
+      if (growth.abs() >= 3) {
+        invPhrase = growth > 0
+            ? 'Tus inversiones crecieron ${growth.toStringAsFixed(0)}% respecto al período anterior. '
+            : 'Tus inversiones cayeron ${growth.abs().toStringAsFixed(0)}% respecto al período anterior. ';
+      } else {
+        invPhrase = 'Tus inversiones se mantuvieron estables. ';
+      }
+    }
+
+    // Oportunidades de ahorro: prioriza categorías controlables (donde el
+    // usuario tiene margen real de decisión) con mayor peso en el total,
+    // en lugar de simplemente repetir la categoría más grande otra vez.
+    String savingsPhrase = '';
+    final controllableEntries = sorted.where((e) {
+      final cat = state.expenseCategories.firstWhere(
+        (c) => c.name == e.key,
+        orElse: () => CategoryDef(name: e.key, subcategories: const []),
+      );
+      return cat.controllabilityFor(null) == Controllability.controlable;
+    }).toList();
+    if (controllableEntries.isNotEmpty) {
+      final op = controllableEntries.first;
+      final pctOp = total <= 0 ? 0 : (op.value / total * 100);
+      if (pctOp >= 10) {
+        savingsPhrase =
+            'Tu mayor oportunidad de ahorro está en "${op.key}" '
+            '(${formatUsd(op.value, decimals: false)}, ${pctOp.toStringAsFixed(0)}% del total): '
+            'es un gasto que sí puedes controlar. ';
+      }
+    }
+    if (savingsPhrase.isEmpty && pctTop >= 30) {
+      savingsPhrase =
+          'Como "${top.key}" concentra ${pctTop.toStringAsFixed(0)}% de tus gastos, '
+          'reducirlo aunque sea un poco tendría el mayor impacto en tu balance. ';
+    }
+
+    final periodLabel = periodRangeLabel(range);
 
     return Text(
-      'En $periodLabel, tus mayores gastos fueron con ${top.key} (${formatUsd(top.value, decimals: false)}), representando ${pctTop.toStringAsFixed(0)}% del total de salidas analizadas. '
-      '$countryPhrase$margenPhrase',
+      'En $periodLabel, tu mayor gasto fue ${top.key} (${formatUsd(top.value, decimals: false)}), '
+      'representando ${pctTop.toStringAsFixed(0)}% del total analizado. '
+      '$countryPhrase$growthPhrase$savingsPhrase$invPhrase',
       style: const TextStyle(fontSize: 13, height: 1.5),
-    );
-  }
-}
-
-class _EvolutionChart extends StatelessWidget {
-  final AppState state;
-  final List<YearMonth> periods;
-  const _EvolutionChart({required this.state, required this.periods});
-
-  @override
-  Widget build(BuildContext context) {
-    final ingresos = <FlSpot>[];
-    final gastos = <FlSpot>[];
-    final inversiones = <FlSpot>[];
-
-    for (int i = 0; i < periods.length; i++) {
-      final p = periods[i];
-      final txns = state.txnsForPeriods({p});
-      final ing = txns
-          .where((t) => t.type == TxType.ingreso)
-          .fold(0.0, (s, t) => s + t.amount);
-      final gas = txns
-          .where((t) => t.type == TxType.gasto || t.type == TxType.deuda)
-          .fold(0.0, (s, t) => s + t.amount);
-      final inv = txns
-          .where((t) => t.type == TxType.inversion)
-          .fold(0.0, (s, t) => s + t.amount);
-      ingresos.add(FlSpot(i.toDouble(), ing));
-      gastos.add(FlSpot(i.toDouble(), gas));
-      inversiones.add(FlSpot(i.toDouble(), inv));
-    }
-
-    return Column(
-      children: [
-        Expanded(
-          child: LineChart(
-            LineChartData(
-              gridData: const FlGridData(show: true, drawVerticalLine: false),
-              borderData: FlBorderData(show: false),
-              titlesData: FlTitlesData(
-                rightTitles: const AxisTitles(
-                  sideTitles: SideTitles(showTitles: false),
-                ),
-                topTitles: const AxisTitles(
-                  sideTitles: SideTitles(showTitles: false),
-                ),
-                leftTitles: const AxisTitles(
-                  sideTitles: SideTitles(showTitles: true, reservedSize: 40),
-                ),
-                bottomTitles: AxisTitles(
-                  sideTitles: SideTitles(
-                    showTitles: true,
-                    getTitlesWidget: (value, meta) {
-                      final idx = value.toInt();
-                      if (idx < 0 || idx >= periods.length)
-                        return const SizedBox.shrink();
-                      return Padding(
-                        padding: const EdgeInsets.only(top: 6),
-                        child: Text(
-                          monthShortLabel(periods[idx]),
-                          style: const TextStyle(fontSize: 9.5),
-                        ),
-                      );
-                    },
-                  ),
-                ),
-              ),
-              lineBarsData: [
-                LineChartBarData(
-                  spots: ingresos,
-                  isCurved: true,
-                  color: AppColors.ingreso,
-                  barWidth: 3,
-                  dotData: const FlDotData(show: true),
-                ),
-                LineChartBarData(
-                  spots: gastos,
-                  isCurved: true,
-                  color: AppColors.gasto,
-                  barWidth: 3,
-                  dotData: const FlDotData(show: true),
-                ),
-                LineChartBarData(
-                  spots: inversiones,
-                  isCurved: true,
-                  color: AppColors.inversion,
-                  barWidth: 3,
-                  dotData: const FlDotData(show: true),
-                ),
-              ],
-            ),
-          ),
-        ),
-        const SizedBox(height: AppSpacing.sm),
-        Wrap(
-          spacing: AppSpacing.md,
-          children: const [
-            _LegendDot(color: AppColors.ingreso, label: 'Ingresos'),
-            _LegendDot(color: AppColors.gasto, label: 'Gastos'),
-            _LegendDot(color: AppColors.inversion, label: 'Inversiones'),
-          ],
-        ),
-      ],
-    );
-  }
-}
-
-class _LegendDot extends StatelessWidget {
-  final Color color;
-  final String label;
-  const _LegendDot({required this.color, required this.label});
-
-  @override
-  Widget build(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          width: 10,
-          height: 10,
-          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-        ),
-        const SizedBox(width: 4),
-        Text(label, style: const TextStyle(fontSize: 11.5)),
-      ],
     );
   }
 }
