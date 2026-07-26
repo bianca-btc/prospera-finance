@@ -22,6 +22,15 @@ class Txn {
   String?
   budgetItemId; // vincula explicitamente a um ítem da Planificación (BudgetItem)
 
+  /// Marca que esta transação PERDEU seu vínculo com uma Planificación
+  /// (Presupuesto/Deuda/Objetivo) porque essa planificación foi excluída.
+  /// É DISTINTO de [isPending] (que significa "valor $0, a programar").
+  /// Uma transação com [needsPlanificacionLink] = true:
+  /// - JÁ é uma transação financeira real e completa (já afetou os KPIs).
+  /// - Precisa apenas ser vinculada (ou revinculada) a alguma planificación
+  ///   para fins de organização — isso NUNCA altera nenhum KPI.
+  bool needsPlanificacionLink;
+
   /// Distingue, dentro de un movimiento de tipo [TxType.inversion], si es
   /// un RETIRO (rescate) en lugar de un aporte. Un rescate:
   /// - Disminuye el saldo de la inversión ([goalId]).
@@ -48,6 +57,7 @@ class Txn {
     this.goalId,
     this.budgetItemId,
     this.isWithdrawal = false,
+    this.needsPlanificacionLink = false,
   });
 
   int get month => date.month;
@@ -96,6 +106,7 @@ class Txn {
     'goalId': goalId,
     'budgetItemId': budgetItemId,
     'isWithdrawal': isWithdrawal,
+    'needsPlanificacionLink': needsPlanificacionLink,
   };
 
   factory Txn.fromJson(Map<String, dynamic> json) => Txn(
@@ -116,6 +127,7 @@ class Txn {
     goalId: json['goalId'] as String?,
     budgetItemId: json['budgetItemId'] as String?,
     isWithdrawal: json['isWithdrawal'] as bool? ?? false,
+    needsPlanificacionLink: json['needsPlanificacionLink'] as bool? ?? false,
   );
 
   Txn copyWith({
@@ -135,6 +147,10 @@ class Txn {
     String? goalId,
     String? budgetItemId,
     bool? isWithdrawal,
+    bool? needsPlanificacionLink,
+    bool clearDebtId = false,
+    bool clearGoalId = false,
+    bool clearBudgetItemId = false,
   }) {
     return Txn(
       id: id,
@@ -150,10 +166,14 @@ class Txn {
       isPending: isPending ?? this.isPending,
       isDeficitRollover: isDeficitRollover ?? this.isDeficitRollover,
       scope: scope ?? this.scope,
-      debtId: debtId ?? this.debtId,
-      goalId: goalId ?? this.goalId,
-      budgetItemId: budgetItemId ?? this.budgetItemId,
+      debtId: clearDebtId ? null : (debtId ?? this.debtId),
+      goalId: clearGoalId ? null : (goalId ?? this.goalId),
+      budgetItemId: clearBudgetItemId
+          ? null
+          : (budgetItemId ?? this.budgetItemId),
       isWithdrawal: isWithdrawal ?? this.isWithdrawal,
+      needsPlanificacionLink:
+          needsPlanificacionLink ?? this.needsPlanificacionLink,
     );
   }
 }

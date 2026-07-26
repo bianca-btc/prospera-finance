@@ -143,6 +143,38 @@ class _BudgetFormScreenState extends State<BudgetFormScreen> {
     Navigator.of(context).pop(item);
   }
 
+  Future<void> _confirmDelete(BuildContext context, AppState state) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('¿Eliminar planificación?'),
+        content: const Text(
+          'Esto solo elimina el ítem de planificación. Las transacciones '
+          'ya registradas NO se eliminan ni afectan tus KPIs — quedarán '
+          'marcadas como "Pendente de planificación" para que puedas '
+          'volver a organizarlas.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancelar'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text(
+              'Eliminar',
+              style: TextStyle(color: AppColors.gasto),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await state.deleteBudget(widget.existing!.id);
+      if (context.mounted) Navigator.of(context).pop();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
@@ -422,10 +454,7 @@ class _BudgetFormScreenState extends State<BudgetFormScreen> {
                 if (widget.existing != null)
                   Expanded(
                     child: OutlinedButton.icon(
-                      onPressed: () {
-                        state.deleteBudget(widget.existing!.id);
-                        Navigator.of(context).pop();
-                      },
+                      onPressed: () => _confirmDelete(context, state),
                       icon: const Icon(
                         Icons.delete_outline_rounded,
                         color: AppColors.gasto,

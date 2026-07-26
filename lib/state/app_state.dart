@@ -858,9 +858,31 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// Elimina un ítem de Planificación (Presupuesto). Una planificación
+  /// NUNCA es propietaria de transacciones — solo las organiza. Por eso,
+  /// eliminarla JAMÁS borra ni altera ninguna transacción financiera, ni
+  /// ningún KPI, Dashboard, gráfico o relatório: únicamente se retira el
+  /// VÍNCULO (budgetItemId) y las transacciones afectadas quedan marcadas
+  /// como "Pendente de planificación" para que el usuario las reorganice.
   Future<void> deleteBudget(String id) async {
     _budgets.removeWhere((b) => b.id == id);
+
+    for (var i = 0; i < _txns.length; i++) {
+      final t = _txns[i];
+      if (t.budgetItemId == id) {
+        _txns[i] = t.copyWith(
+          clearBudgetItemId: true,
+          needsPlanificacionLink: true,
+        );
+      }
+    }
+
     await _persistBudgets();
+    await _persistTxns();
+    assert(
+      validateFinancialIntegrity(),
+      'La eliminación de la planificación violó la integridad financiera',
+    );
     notifyListeners();
   }
 
@@ -986,18 +1008,41 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// Elimina un Objetivo (meta de inversión). El objetivo/planificación
+  /// NUNCA es propietario de transacciones — solo las organiza. Eliminar
+  /// un objetivo JAMÁS borra ni altera ninguna transacción financiera, ni
+  /// ningún KPI, Dashboard, gráfico o relatório: solo se retira el VÍNCULO
+  /// (goalId y budgetItemId asociados) y las transacciones afectadas
+  /// quedan marcadas como "Pendente de planificación".
   Future<void> deleteGoal(String id) async {
     _goals.removeWhere((g) => g.id == id);
+    final unlinkedBudgetIds = _budgets
+        .where((b) => b.linkedGoalId == id)
+        .map((b) => b.id)
+        .toSet();
     _budgets.removeWhere((b) => b.linkedGoalId == id);
-    // Desvincula (não exclui) transações que apontavam para este objetivo.
+    // Desvincula (não exclui) transações que apontavam para este objetivo,
+    // e marca como pendentes de planificación para reorganização.
     for (var i = 0; i < _txns.length; i++) {
-      if (_txns[i].goalId == id) {
-        _txns[i] = _txns[i].copyWith(goalId: '');
+      final t = _txns[i];
+      final linkedToGoal = t.goalId == id;
+      final linkedToRemovedBudget =
+          t.budgetItemId != null && unlinkedBudgetIds.contains(t.budgetItemId);
+      if (linkedToGoal || linkedToRemovedBudget) {
+        _txns[i] = t.copyWith(
+          clearGoalId: linkedToGoal,
+          clearBudgetItemId: linkedToRemovedBudget,
+          needsPlanificacionLink: true,
+        );
       }
     }
     await _persistGoals();
     await _persistBudgets();
     await _persistTxns();
+    assert(
+      validateFinancialIntegrity(),
+      'La eliminación del objetivo violó la integridad financiera',
+    );
     notifyListeners();
   }
 
@@ -1134,16 +1179,75 @@ class AppState extends ChangeNotifier {
     }
   }
 
+  /// Elimina una Deuda. La deuda/planificación NUNCA es propietaria de
+  /// transacciones — solo las organiza. Eliminarla JAMÁS borra ni altera
+  /// ninguna transacción financiera, ni ningún KPI, Dashboard, gráfico o
+  /// relatório: solo se retira el VÍNCULO (debtId y budgetItemId
+  /// asociados) y las transacciones afectadas quedan marcadas como
+  /// "Pendente de planificación".
   Future<void> deleteDebt(String id) async {
     _debts.removeWhere((d) => d.id == id);
+    final unlinkedBudgetIds = _budgets
+        .where((b) => b.linkedDebtId == id)
+        .map((b) => b.id)
+        .toSet();
     _budgets.removeWhere((b) => b.linkedDebtId == id);
     for (var i = 0; i < _txns.length; i++) {
-      if (_txns[i].debtId == id) {
-        _txns[i] = _txns[i].copyWith(debtId: '');
+      final t = _txns[i];
+      final linkedToDebt = t.debtId == id;
+      final linkedToRemovedBudget =
+          t.budgetItemId != null && unlinkedBudgetIds.contains(t.budgetItemId);
+      if (linkedToDebt || linkedToRemovedBudget) {
+        _txns[i] = t.copyWith(
+          clearDebtId: linkedToDebt,
+          clearBudgetItemId: linkedToRemovedBudget,
+          needsPlanificacionLink: true,
+        );
       }
     }
     await _persistDebts();
     await _persistBudgets();
+    await _persistTxns();
+    assert(
+      validateFinancialIntegrity(),
+      'La eliminación de la deuda violó la integridad financiera',
+    );
+    notifyListeners();
+  }
+
+  // ============================================================
+  // ============= TRANSAÇÕES PENDENTES DE PLANIFICAÇÃO =============
+  // ============================================================
+  // Uma transação fica "pendente de planificación" quando perdeu seu
+  // vínculo (budgetItemId/debtId/goalId) porque a planificación à qual
+  // pertencia foi excluída. NUNCA afeta os KPIs — é puramente uma
+  // pendência de ORGANIZAÇÃO, resolvível vinculando a transação a uma
+  // planificación existente ou nova.
+
+  /// Todas las transacciones que necesitan ser vinculadas (o revinculadas)
+  /// a una planificación.
+  List<Txn> get txnsPendingPlanificacion =>
+      _txns.where((t) => t.needsPlanificacionLink).toList()
+        ..sort((a, b) => b.date.compareTo(a.date));
+
+  int get pendingPlanificacionCount => txnsPendingPlanificacion.length;
+
+  double get pendingPlanificacionTotal => txnsPendingPlanificacion.fold(
+    0.0,
+    (s, t) => s + t.amount,
+  );
+
+  bool get hasPendingPlanificacion => txnsPendingPlanificacion.isNotEmpty;
+
+  /// Vincula una transacción pendiente a un ítem de Planificación (Budget)
+  /// existente. Nunca altera ningún KPI — solo el vínculo de organización.
+  Future<void> linkTxnToBudget(String txnId, String budgetItemId) async {
+    final idx = _txns.indexWhere((t) => t.id == txnId);
+    if (idx == -1) return;
+    _txns[idx] = _txns[idx].copyWith(
+      budgetItemId: budgetItemId,
+      needsPlanificacionLink: false,
+    );
     await _persistTxns();
     notifyListeners();
   }
@@ -1362,6 +1466,77 @@ class AppState extends ChangeNotifier {
       totalAportesInversion() - totalRescatesInversion();
 
   double get balance => totalIngresos - totalGastosYDeudas - totalInversiones;
+
+  // ============================================================
+  // ============= SISTEMA DE FLUJO DE CAPITAL CERRADO =============
+  // ============================================================
+  // Los 3 KPIs principales (Ingreso disponible / Gastos / Inversiones)
+  // representan ESTADOS del dinero, NO flujos de un período. Por eso se
+  // calculan siempre sobre el HISTÓRICO COMPLETO de transacciones,
+  // independientemente del [selectedPeriods] que el usuario tenga elegido
+  // en la UI (ese selector solo afecta reportes/gráficos, nunca el estado
+  // real de "cuánto dinero tengo disponible ahora").
+  //
+  // Invariante fundamental que SIEMPRE debe cumplirse:
+  //   ingresoDisponible + totalGastosHistorico + inversionesActuales
+  //       == totalIngresosHistorico
+  //
+  // Ningún dólar puede estar en dos estados a la vez, ni desaparecer.
+  // ============================================================
+
+  /// Todas las transacciones NO pendientes ($0 a programar), de TODA la
+  /// historia (sin filtrar por período seleccionado).
+  List<Txn> get _allRealizedTxns => _txns.where((t) => !t.isPending).toList();
+
+  /// Total histórico de Ingresos (todas las transacciones TxType.ingreso,
+  /// de cualquier período).
+  double get totalIngresosHistorico => _allRealizedTxns
+      .where((t) => t.type == TxType.ingreso)
+      .fold(0.0, (s, t) => s + t.amount);
+
+  /// Total histórico de Gastos reales (Gasto + Deuda). NUNCA incluye
+  /// aportes de inversión — un aporte es un "destino" del dinero, no un
+  /// gasto definitivo.
+  double get totalGastosHistorico => _allRealizedTxns
+      .where((t) => t.type == TxType.gasto || t.type == TxType.deuda)
+      .fold(0.0, (s, t) => s + t.amount);
+
+  /// Total histórico de Aportes de inversión (sin restar rescates).
+  double get totalAportesHistorico => _allRealizedTxns
+      .where((t) => t.type == TxType.inversion && !t.isWithdrawal)
+      .fold(0.0, (s, t) => s + t.amount);
+
+  /// Total histórico de Rescates de inversión.
+  double get totalRescatesHistorico => _allRealizedTxns
+      .where((t) => t.type == TxType.inversion && t.isWithdrawal)
+      .fold(0.0, (s, t) => s + t.amount);
+
+  /// KPI Inversiones: capital actualmente invertido = aportes - rescates,
+  /// calculado sobre TODA la historia (nunca por período).
+  double get inversionesActuales =>
+      totalAportesHistorico - totalRescatesHistorico;
+
+  /// Total interno (nunca mostrado directamente en la UI) usado solo para
+  /// validar la ecuación fundamental: Gasto Total = Gastos + Inversiones.
+  double get _gastoTotalHistorico =>
+      totalGastosHistorico + inversionesActuales;
+
+  /// KPI Ingreso disponible: única fuente de dinero libre para gastar o
+  /// aportar. Aumenta con cada Ingreso o Rescate; disminuye con cada Gasto
+  /// o Aporte. Calculado como ESTADO acumulado (histórico completo), no
+  /// como suma filtrada por período — así nunca se "pierde" el efecto de
+  /// un aporte/rescate hecho en un mes fuera del filtro actual.
+  double get ingresoDisponible =>
+      totalIngresosHistorico - _gastoTotalHistorico;
+
+  /// Verifica que la ecuación fundamental de conservación de capital se
+  /// mantenga siempre: ningún dólar puede desaparecer ni estar en dos
+  /// estados a la vez. Devuelve `true` si todo está consistente.
+  bool validateFinancialIntegrity({double epsilon = 0.01}) {
+    final suma =
+        ingresoDisponible + totalGastosHistorico + inversionesActuales;
+    return (suma - totalIngresosHistorico).abs() <= epsilon;
+  }
 
   double plannedTotalFor(Set<YearMonth> periods) {
     return _budgets

@@ -158,6 +158,38 @@ class _DebtFormScreenState extends State<DebtFormScreen> {
     Navigator.of(context).pop();
   }
 
+  Future<void> _confirmDelete(BuildContext context, AppState state) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('¿Eliminar deuda?'),
+        content: const Text(
+          'Esto solo elimina la deuda y sus cuotas planificadas. Las '
+          'transacciones ya registradas (pagos ya hechos) NO se eliminan '
+          'ni afectan tus KPIs — quedarán marcadas como "Pendente de '
+          'planificación" para que puedas volver a organizarlas.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancelar'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text(
+              'Eliminar',
+              style: TextStyle(color: AppColors.gasto),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await state.deleteDebt(widget.existing!.id);
+      if (context.mounted) Navigator.of(context).pop();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
@@ -372,10 +404,7 @@ class _DebtFormScreenState extends State<DebtFormScreen> {
                 if (widget.existing != null)
                   Expanded(
                     child: OutlinedButton.icon(
-                      onPressed: () {
-                        state.deleteDebt(widget.existing!.id);
-                        Navigator.of(context).pop();
-                      },
+                      onPressed: () => _confirmDelete(context, state),
                       icon: const Icon(
                         Icons.delete_outline_rounded,
                         color: AppColors.gasto,

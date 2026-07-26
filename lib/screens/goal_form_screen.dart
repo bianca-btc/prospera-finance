@@ -131,6 +131,38 @@ class _GoalFormScreenState extends State<GoalFormScreen> {
     Navigator.of(context).pop();
   }
 
+  Future<void> _confirmDelete(BuildContext context, AppState state) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('¿Eliminar objetivo?'),
+        content: const Text(
+          'Esto solo elimina el objetivo de inversión y su meta mensual. '
+          'Los aportes/rescates ya registrados NO se eliminan ni afectan '
+          'tus KPIs — quedarán marcados como "Pendente de planificación" '
+          'para que puedas volver a organizarlos.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancelar'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text(
+              'Eliminar',
+              style: TextStyle(color: AppColors.gasto),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await state.deleteGoal(widget.existing!.id);
+      if (context.mounted) Navigator.of(context).pop();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
@@ -234,10 +266,7 @@ class _GoalFormScreenState extends State<GoalFormScreen> {
                 if (widget.existing != null)
                   Expanded(
                     child: OutlinedButton.icon(
-                      onPressed: () {
-                        state.deleteGoal(widget.existing!.id);
-                        Navigator.of(context).pop();
-                      },
+                      onPressed: () => _confirmDelete(context, state),
                       icon: const Icon(
                         Icons.delete_outline_rounded,
                         color: AppColors.gasto,

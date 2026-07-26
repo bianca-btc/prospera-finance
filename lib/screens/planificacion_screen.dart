@@ -5,6 +5,7 @@ import '../models/enums.dart';
 import '../models/budget_item.dart';
 import '../models/debt.dart';
 import '../models/goal.dart';
+import '../models/transaction.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
 import '../utils/formatters.dart';
@@ -57,6 +58,10 @@ class _PlanificacionScreenState extends State<PlanificacionScreen> {
           100,
         ),
         children: [
+          if (state.hasPendingPlanificacion) ...[
+            _PendingPlanificacionSection(state: state),
+            const SizedBox(height: AppSpacing.xxl),
+          ],
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -678,6 +683,38 @@ class _BudgetTile extends StatefulWidget {
 class _BudgetTileState extends State<_BudgetTile> {
   bool _expanded = false;
 
+  Future<void> _confirmDeleteBudget(BuildContext context, BudgetItem b) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('¿Eliminar planificación?'),
+        content: const Text(
+          'Esto solo elimina el ítem de planificación. Las transacciones '
+          'ya registradas NO se eliminan ni afectan tus KPIs — quedarán '
+          'marcadas como "Pendente de planificación" para que puedas '
+          'volver a organizarlas.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancelar'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text(
+              'Eliminar',
+              style: TextStyle(color: AppColors.gasto),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      // ignore: use_build_context_synchronously
+      context.read<AppState>().deleteBudget(b.id);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final b = widget.item;
@@ -839,8 +876,7 @@ class _BudgetTileState extends State<_BudgetTile> {
                   const SizedBox(width: AppSpacing.sm),
                   Expanded(
                     child: OutlinedButton.icon(
-                      onPressed: () =>
-                          context.read<AppState>().deleteBudget(b.id),
+                      onPressed: () => _confirmDeleteBudget(context, b),
                       icon: const Icon(
                         Icons.delete_outline_rounded,
                         size: 16,
@@ -1286,6 +1322,296 @@ class _GoalTile extends StatelessWidget {
               ),
             ],
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Seção destacada "⚠ Transações pendentes", exibida ACIMA da lista de
+/// planificaciones. Só aparece quando existem transações que perderam seu
+/// vínculo com uma planificación (geralmente porque essa planificación foi
+/// excluída). Vincular uma transação NUNCA altera nenhum KPI — é puramente
+/// uma ação de organização.
+class _PendingPlanificacionSection extends StatefulWidget {
+  final AppState state;
+  const _PendingPlanificacionSection({required this.state});
+
+  @override
+  State<_PendingPlanificacionSection> createState() =>
+      _PendingPlanificacionSectionState();
+}
+
+class _PendingPlanificacionSectionState
+    extends State<_PendingPlanificacionSection> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final state = widget.state;
+    final pending = state.txnsPendingPlanificacion;
+    final count = pending.length;
+    final total = state.pendingPlanificacionTotal;
+
+    return Container(
+      decoration: BoxDecoration(
+        color: AppColors.warning.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.warning.withValues(alpha: 0.4)),
+      ),
+      child: Column(
+        children: [
+          InkWell(
+            borderRadius: BorderRadius.circular(14),
+            onTap: () => setState(() => _expanded = !_expanded),
+            child: Padding(
+              padding: const EdgeInsets.all(AppSpacing.md),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.warning_amber_rounded,
+                    color: AppColors.warning,
+                  ),
+                  const SizedBox(width: AppSpacing.sm),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Transações pendentes',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w700,
+                            fontSize: 14,
+                            color: AppColors.warning,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          '$count transaç${count == 1 ? 'ão precisa' : 'ões precisam'} '
+                          'de ser vinculada${count == 1 ? '' : 's'} a uma planificación',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: Colors.white70,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(
+                        formatUsd(total, decimals: false),
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                          color: AppColors.warning,
+                        ),
+                      ),
+                      Row(
+                        children: [
+                          Text(
+                            'organizar',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: AppColors.warning.withValues(alpha: 0.9),
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          Icon(
+                            _expanded
+                                ? Icons.expand_less_rounded
+                                : Icons.expand_more_rounded,
+                            size: 18,
+                            color: AppColors.warning,
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (_expanded)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                AppSpacing.md,
+                0,
+                AppSpacing.md,
+                AppSpacing.md,
+              ),
+              child: Column(
+                children: pending
+                    .map(
+                      (t) => Padding(
+                        padding: const EdgeInsets.only(top: AppSpacing.sm),
+                        child: _PendingTxnTile(txn: t, state: state),
+                      ),
+                    )
+                    .toList(),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Tile de uma transação pendente individual — permite vincular a uma
+/// planificación existente do mesmo mês/tipo, ou criar uma nova e vincular
+/// imediatamente. Uma vez vinculada, desaparece automaticamente da lista.
+class _PendingTxnTile extends StatelessWidget {
+  final Txn txn;
+  final AppState state;
+  const _PendingTxnTile({required this.txn, required this.state});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(AppSpacing.sm),
+      decoration: BoxDecoration(
+        color: Theme.of(context).cardTheme.color,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  '${txn.category} · ${txn.subcategory}',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 12.5,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '${formatUsd(txn.amount, decimals: false)} · ${txn.movementTypeLabel}',
+                  style: const TextStyle(fontSize: 11, color: Colors.white60),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          OutlinedButton(
+            onPressed: () => _showLinkOptions(context),
+            style: OutlinedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 10,
+                vertical: 6,
+              ),
+              side: const BorderSide(color: AppColors.warning),
+            ),
+            child: const Text(
+              'Vincular',
+              style: TextStyle(fontSize: 11.5, color: AppColors.warning),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showLinkOptions(BuildContext context) {
+    final ym = YearMonth(txn.year, txn.month);
+    // Solo se sugieren planificaciones de Gasto normal del mismo mes que
+    // encajen con el tipo de la transacción; deudas/objetivos ya tienen
+    // sus propios vínculos automáticos (debtId/goalId) y no aparecen aquí.
+    final candidates = state.budgets
+        .where(
+          (b) =>
+              b.year == ym.year &&
+              b.month == ym.month &&
+              !b.isDebtInstallment &&
+              !b.isGoalContribution,
+        )
+        .toList();
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.lg),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Vincular transação',
+                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              Text(
+                '${txn.category} · ${txn.subcategory} · '
+                '${formatUsd(txn.amount, decimals: false)}',
+                style: const TextStyle(fontSize: 12, color: Colors.white70),
+              ),
+              const SizedBox(height: AppSpacing.md),
+              if (candidates.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.only(bottom: AppSpacing.sm),
+                  child: Text(
+                    'Não há planificaciones existentes neste mês. '
+                    'Crie uma nova para vincular esta transação.',
+                    style: TextStyle(fontSize: 12, color: Colors.white60),
+                  ),
+                )
+              else
+                ConstrainedBox(
+                  constraints: const BoxConstraints(maxHeight: 260),
+                  child: ListView(
+                    shrinkWrap: true,
+                    children: candidates
+                        .map(
+                          (b) => ListTile(
+                            leading: const Icon(
+                              Icons.link_rounded,
+                              color: AppColors.gasto,
+                            ),
+                            title: Text('${b.category} · ${b.subcategory}'),
+                            subtitle: Text(
+                              formatUsd(b.planned, decimals: false),
+                            ),
+                            onTap: () {
+                              state.linkTxnToBudget(txn.id, b.id);
+                              Navigator.pop(ctx);
+                            },
+                          ),
+                        )
+                        .toList(),
+                  ),
+                ),
+              const SizedBox(height: AppSpacing.sm),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  icon: const Icon(Icons.add_rounded),
+                  label: const Text('Criar nova planificação e vincular'),
+                  onPressed: () async {
+                    Navigator.pop(ctx);
+                    final created = await Navigator.of(context).push<BudgetItem>(
+                      MaterialPageRoute(
+                        builder: (_) => BudgetFormScreen(
+                          initialMonth: ym.month,
+                          initialYear: ym.year,
+                          initialCategory: txn.category,
+                          initialSubcategory: txn.subcategory,
+                          initialPlanned: txn.amount,
+                        ),
+                      ),
+                    );
+                    if (created != null) {
+                      state.linkTxnToBudget(txn.id, created.id);
+                    }
+                  },
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

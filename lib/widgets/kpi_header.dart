@@ -28,11 +28,28 @@ class KpiHeader extends StatelessWidget {
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
 
-    final ingresos = state.totalIngresos;
-    final gastos = state.totalGastosYDeudas;
-    final inversiones = state.totalInversiones;
+    // Los 3 KPIs principales representan ESTADOS del dinero (histórico
+    // completo, sin filtrar por período) para que la ecuación fundamental
+    // "Ingreso disponible + Gastos + Inversiones = Total Ingresos" se
+    // cumpla SIEMPRE, sin importar qué período tenga seleccionado el
+    // usuario en el filtro. Así, un aporte o rescate hecho en cualquier
+    // mes siempre se refleja correctamente en el KPI de Ingreso disponible.
+    final ingresos = state.ingresoDisponible;
+    final gastos = state.totalGastosHistorico;
+    final inversiones = state.inversionesActuales;
+
+    // El "flujo neto del período" (fila inferior) sí respeta el filtro de
+    // período seleccionado — es información complementaria sobre cómo se
+    // movió el dinero EN ESE período específico, distinta del estado
+    // acumulado (Ingreso disponible) mostrado arriba.
     final balance = state.balance;
 
+    // Las barras de progreso comparan lo EJECUTADO EN EL PERÍODO vs. lo
+    // PLANIFICADO EN EL PERÍODO — a propósito distinto del número
+    // principal de la tarjeta (que es el estado histórico acumulado), para
+    // que el usuario pueda seguir viendo "cuánto llevo gastado este mes".
+    final gastosPeriodo = state.totalGastosYDeudas;
+    final inversionesPeriodo = state.totalInversiones;
     final plannedGastos = state.plannedGastosSelected;
     final gastosRatio = state.gastosExecutedRatio;
 
@@ -54,7 +71,7 @@ class KpiHeader extends StatelessWidget {
           children: [
             Expanded(
               child: _CompactStat(
-                label: 'Ingresos',
+                label: 'Disponible',
                 value: formatUsd(ingresos, decimals: false),
                 color: AppColors.ingreso,
               ),
@@ -75,7 +92,7 @@ class KpiHeader extends StatelessWidget {
             ),
             Expanded(
               child: _CompactStat(
-                label: 'Saldo',
+                label: 'Flujo período',
                 value: formatUsdSigned(balance),
                 color: balanceColor,
               ),
@@ -103,7 +120,7 @@ class KpiHeader extends StatelessWidget {
               children: [
                 Expanded(
                   child: _KpiCard(
-                    label: 'Ingresos',
+                    label: 'Ingreso disponible',
                     value: formatUsd(ingresos, decimals: false),
                     color: AppColors.ingreso,
                   ),
@@ -123,7 +140,7 @@ class KpiHeader extends StatelessWidget {
                             ratio: gastosRatio,
                             color: AppColors.gasto,
                             caption:
-                                '${formatUsd(gastos, decimals: false)}/${formatUsd(plannedGastos, decimals: false)}',
+                                '${formatUsd(gastosPeriodo, decimals: false)}/${formatUsd(plannedGastos, decimals: false)}',
                           )
                         : null,
                   ),
@@ -146,7 +163,7 @@ class KpiHeader extends StatelessWidget {
                                 ? 'Meta superada'
                                 : metaConcluida
                                     ? 'Meta concluída'
-                                    : '${formatUsd(inversiones, decimals: false)}/${formatUsd(plannedInversion, decimals: false)}',
+                                    : '${formatUsd(inversionesPeriodo, decimals: false)}/${formatUsd(plannedInversion, decimals: false)}',
                             captionBold: metaConcluida || metaSuperada,
                           )
                         : null,
@@ -158,9 +175,11 @@ class KpiHeader extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 6),
-          // Saldo: fila propia, con estilo visualmente distinto (diagonal /
-          // pastilla) de los 3 KPIs de arriba, número a la izquierda y clara
-          // indicación pos/neg mediante color e ícono.
+          // Flujo neto del período seleccionado: fila propia, con estilo
+          // visualmente distinto (diagonal / pastilla) de los 3 KPIs de
+          // arriba (que son ESTADOS acumulados). Esta fila sí respeta el
+          // filtro de período — muestra cuánto entró/salió en ese período,
+          // sin alterar la lectura del Ingreso disponible acumulado.
           _SaldoRow(balance: balance, color: balanceColor),
         ],
       ),
@@ -226,7 +245,9 @@ class _SaldoRow extends StatelessWidget {
           ),
           const Spacer(),
           Text(
-            isPositive ? 'Saldo positivo' : 'Saldo negativo',
+            isPositive
+                ? 'Flujo positivo (período)'
+                : 'Flujo negativo (período)',
             style: TextStyle(
               fontSize: 10.5,
               fontWeight: FontWeight.w600,
