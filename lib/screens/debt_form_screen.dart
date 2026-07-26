@@ -29,7 +29,8 @@ class _DebtFormScreenState extends State<DebtFormScreen> {
   final _totalCtrl = TextEditingController();
   final _monthsCtrl = TextEditingController();
   final _descCtrl = TextEditingController();
-  DateTime _startDate = DateTime.now();
+  final DateTime _startDate = DateTime.now();
+  DateTime? _endDate;
   String? _category;
   String? _subcategory;
   String _country = '';
@@ -45,12 +46,18 @@ class _DebtFormScreenState extends State<DebtFormScreen> {
     _totalCtrl.text = d != null ? d.totalAmount.toStringAsFixed(2) : '';
     _monthsCtrl.text = d != null ? d.months.toString() : '';
     _descCtrl.text = d?.description ?? '';
-    _startDate = d?.startDate ?? DateTime.now();
     _category = d?.category;
     _subcategory = d?.subcategory;
     _country = d?.country ?? '';
     _previewTotal = d?.totalAmount ?? 0;
     _previewMonths = d?.months ?? 1;
+    if (d != null) {
+      _endDate = DateTime(
+        d.startDate.year,
+        d.startDate.month + d.months,
+        d.startDate.day,
+      );
+    }
     _totalCtrl.addListener(_recalcPreview);
     _monthsCtrl.addListener(_recalcPreview);
   }
@@ -61,6 +68,11 @@ class _DebtFormScreenState extends State<DebtFormScreen> {
           double.tryParse(_totalCtrl.text.replaceAll(',', '.')) ?? 0;
       _previewMonths = int.tryParse(_monthsCtrl.text) ?? 1;
       if (_previewMonths < 1) _previewMonths = 1;
+      _endDate = DateTime(
+        _startDate.year,
+        _startDate.month + _previewMonths,
+        _startDate.day,
+      );
     });
   }
 
@@ -95,14 +107,25 @@ class _DebtFormScreenState extends State<DebtFormScreen> {
     super.dispose();
   }
 
-  Future<void> _pickStartDate() async {
+  /// Al elegir manualmente la fecha final, recalcula la cantidad de meses
+  /// correspondiente a partir de hoy (fuente única de verdad: siempre el
+  /// usuario ve ambos campos sincronizados).
+  Future<void> _pickEndDate() async {
     final picked = await showDatePicker(
       context: context,
-      initialDate: _startDate,
+      initialDate: _endDate ?? DateTime.now().add(const Duration(days: 180)),
       firstDate: DateTime(2020),
       lastDate: DateTime(2040),
     );
-    if (picked != null) setState(() => _startDate = picked);
+    if (picked == null) return;
+    final months =
+        (picked.year - _startDate.year) * 12 +
+        (picked.month - _startDate.month);
+    setState(() {
+      _endDate = picked;
+      _previewMonths = months < 1 ? 1 : months;
+      _monthsCtrl.text = _previewMonths.toString();
+    });
   }
 
   void _submit(AppState state) {
@@ -122,7 +145,7 @@ class _DebtFormScreenState extends State<DebtFormScreen> {
       subcategory: _subcategory!,
       country: _country,
       totalAmount: double.tryParse(_totalCtrl.text.replaceAll(',', '.')) ?? 0,
-      startDate: _startDate,
+      startDate: widget.existing?.startDate ?? _startDate,
       months: int.tryParse(_monthsCtrl.text) ?? 1,
       paidAmount: widget.existing?.paidAmount ?? 0,
       description: _descCtrl.text.trim(),
@@ -180,32 +203,51 @@ class _DebtFormScreenState extends State<DebtFormScreen> {
               },
             ),
             const SizedBox(height: AppSpacing.md),
+            TextFormField(
+              controller: _monthsCtrl,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'Cantidad de meses',
+                helperText: 'A partir de hoy. Calcula la fecha final automáticamente.',
+                helperMaxLines: 2,
+              ),
+              validator: (v) {
+                if (v == null || v.trim().isEmpty) {
+                  return 'Ingresa la cantidad de meses';
+                }
+                final n = int.tryParse(v);
+                if (n == null || n < 1) return 'Cantidad inválida';
+                return null;
+              },
+            ),
+            const SizedBox(height: AppSpacing.md),
             InkWell(
-              onTap: _pickStartDate,
+              onTap: _pickEndDate,
               child: InputDecorator(
-                decoration: const InputDecoration(labelText: 'Fecha inicial'),
+                decoration: const InputDecoration(labelText: 'Fecha final'),
                 child: Row(
                   children: [
-                    Text(formatFullDate(_startDate)),
+                    Text(
+                      _endDate != null
+                          ? formatFullDate(_endDate!)
+                          : 'Sin definir',
+                    ),
                     const Spacer(),
                     const Icon(Icons.calendar_today_rounded, size: 18),
                   ],
                 ),
               ),
             ),
-            const SizedBox(height: AppSpacing.md),
-            TextFormField(
-              controller: _monthsCtrl,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: 'Cantidad de meses'),
-              validator: (v) {
-                if (v == null || v.trim().isEmpty)
-                  return 'Ingresa la cantidad de meses';
-                final n = int.tryParse(v);
-                if (n == null || n < 1) return 'Cantidad inválida';
-                return null;
-              },
-            ),
+            if (widget.existing != null) ...[
+              const SizedBox(height: AppSpacing.md),
+              _ReadOnlyInfoCard(
+                label: 'Pagado hasta ahora',
+                value: formatUsd(
+                  widget.existing!.paidAmount,
+                  decimals: false,
+                ),
+              ),
+            ],
             const SizedBox(height: AppSpacing.md),
             if (_previewTotal > 0)
               _MonthlyInstallmentPreviewCard(value: _monthlyInstallmentPreview),
@@ -365,6 +407,46 @@ class _DebtFormScreenState extends State<DebtFormScreen> {
   }
 }
 
+/// Card de solo lectura para mostrar valores calculados automáticamente
+/// (fuente única de verdad) que el usuario NO puede editar manualmente,
+/// como el monto ya pagado de una deuda (siempre = suma de pagos
+/// registrados).
+class _ReadOnlyInfoCard extends StatelessWidget {
+  final String label;
+  final String value;
+  const _ReadOnlyInfoCard({required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.lg,
+        vertical: AppSpacing.md,
+      ),
+      decoration: BoxDecoration(
+        color: Theme.of(context).inputDecorationTheme.fillColor,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 13,
+              color: Theme.of(context).textTheme.bodySmall?.color,
+            ),
+          ),
+          Text(
+            value,
+            style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _MonthlyInstallmentPreviewCard extends StatelessWidget {
   final double value;
   const _MonthlyInstallmentPreviewCard({required this.value});
@@ -374,15 +456,15 @@ class _MonthlyInstallmentPreviewCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(AppSpacing.lg),
       decoration: BoxDecoration(
-        color: AppColors.deuda.withValues(alpha: 0.12),
+        color: AppColors.inversion.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.deuda.withValues(alpha: 0.35)),
+        border: Border.all(color: AppColors.inversion.withValues(alpha: 0.35)),
       ),
       child: Row(
         children: [
           const Icon(
             Icons.calculate_outlined,
-            color: AppColors.deuda,
+            color: AppColors.inversion,
             size: 22,
           ),
           const SizedBox(width: AppSpacing.md),
@@ -400,7 +482,7 @@ class _MonthlyInstallmentPreviewCard extends StatelessWidget {
                   style: const TextStyle(
                     fontSize: 20,
                     fontWeight: FontWeight.w700,
-                    color: AppColors.deuda,
+                    color: AppColors.inversion,
                   ),
                 ),
               ],

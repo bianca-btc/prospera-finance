@@ -55,6 +55,7 @@ class _BudgetFormScreenState extends State<BudgetFormScreen> {
   late Priority _priority;
   final _descCtrl = TextEditingController();
   late PaymentMethod _method;
+  bool _moreOptions = false;
 
   @override
   void initState() {
@@ -156,8 +157,8 @@ class _BudgetFormScreenState extends State<BudgetFormScreen> {
       appBar: AppBar(
         title: Text(
           widget.existing != null
-              ? 'Editar presupuesto'
-              : 'Nuevo ítem de presupuesto',
+              ? 'Editar planificación'
+              : 'Nueva planificación · Gasto normal',
         ),
       ),
       body: Form(
@@ -165,12 +166,72 @@ class _BudgetFormScreenState extends State<BudgetFormScreen> {
         child: ListView(
           padding: const EdgeInsets.all(AppSpacing.lg),
           children: [
+            // ------- Campos esenciales: Nombre (categoría), Valor, Periodo -------
+            Row(
+              children: [
+                Expanded(
+                  child: DropdownButtonFormField<String>(
+                    initialValue: _category,
+                    decoration: const InputDecoration(
+                      labelText: 'Nombre / Categoría',
+                    ),
+                    items: cats
+                        .map(
+                          (c) => DropdownMenuItem(
+                            value: c.name,
+                            child: Text(c.name),
+                          ),
+                        )
+                        .toList(),
+                    onChanged: (v) => setState(() {
+                      _category = v;
+                      _subcategory = null;
+                    }),
+                  ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.add_circle_outline_rounded),
+                  tooltip: 'Agregar categoría',
+                  onPressed: () async {
+                    final name = await showAddItemDialog(
+                      context,
+                      title: 'Nueva categoría',
+                    );
+                    if (name != null && name.isNotEmpty) {
+                      await state.addExpenseCategory(
+                        CategoryDef(name: name, subcategories: []),
+                      );
+                      setState(() => _category = name);
+                    }
+                  },
+                ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.md),
+            TextFormField(
+              controller: _plannedCtrl,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
+              decoration: const InputDecoration(
+                labelText: 'Valor planificado (USD)',
+                prefixText: '\$ ',
+              ),
+              validator: (v) {
+                if (v == null || v.trim().isEmpty) return 'Ingresa un valor';
+                if (double.tryParse(v.replaceAll(',', '.')) == null) {
+                  return 'Valor inválido';
+                }
+                return null;
+              },
+            ),
+            const SizedBox(height: AppSpacing.md),
             Row(
               children: [
                 Expanded(
                   child: DropdownButtonFormField<int>(
                     initialValue: _month,
-                    decoration: const InputDecoration(labelText: 'Mes'),
+                    decoration: const InputDecoration(labelText: 'Periodo · Mes'),
                     items: List.generate(12, (i) => i + 1)
                         .map(
                           (m) => DropdownMenuItem(
@@ -197,185 +258,164 @@ class _BudgetFormScreenState extends State<BudgetFormScreen> {
                 ),
               ],
             ),
-            const SizedBox(height: AppSpacing.md),
-            Row(
-              children: [
-                Expanded(
-                  child: DropdownButtonFormField<String>(
-                    initialValue: _category,
-                    decoration: const InputDecoration(labelText: 'Categoría'),
-                    items: cats
-                        .map(
-                          (c) => DropdownMenuItem(
-                            value: c.name,
-                            child: Text(c.name),
-                          ),
-                        )
-                        .toList(),
-                    onChanged: (v) => setState(() {
-                      _category = v;
-                      _subcategory = null;
-                    }),
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.add_circle_outline_rounded),
-                  onPressed: () async {
-                    final name = await showAddItemDialog(
-                      context,
-                      title: 'Nueva categoría',
-                    );
-                    if (name != null && name.isNotEmpty) {
-                      await state.addExpenseCategory(
-                        CategoryDef(name: name, subcategories: []),
-                      );
-                      setState(() => _category = name);
-                    }
-                  },
-                ),
-              ],
-            ),
-            const SizedBox(height: AppSpacing.md),
-            Row(
-              children: [
-                Expanded(
-                  child: DropdownButtonFormField<String>(
-                    initialValue: subOptions.contains(_subcategory)
-                        ? _subcategory
-                        : null,
-                    decoration: const InputDecoration(
-                      labelText: 'Subcategoría',
-                    ),
-                    items: subOptions
-                        .map((s) => DropdownMenuItem(value: s, child: Text(s)))
-                        .toList(),
-                    onChanged: (v) => setState(() => _subcategory = v),
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.add_circle_outline_rounded),
-                  onPressed: _category == null
-                      ? null
-                      : () async {
-                          final name = await showAddItemDialog(
-                            context,
-                            title: 'Nueva subcategoría',
-                          );
-                          if (name != null && name.isNotEmpty) {
-                            await state.addSubcategory(
-                              isExpense: true,
-                              category: _category!,
-                              subcategory: name,
-                            );
-                            setState(() => _subcategory = name);
-                          }
-                        },
-                ),
-              ],
-            ),
-            const SizedBox(height: AppSpacing.md),
-            Row(
-              children: [
-                Expanded(
-                  child: DropdownButtonFormField<String>(
-                    initialValue: state.countries.contains(_country)
-                        ? _country
-                        : null,
-                    decoration: const InputDecoration(labelText: 'País'),
-                    items: state.countries
-                        .map((c) => DropdownMenuItem(value: c, child: Text(c)))
-                        .toList(),
-                    onChanged: (v) => setState(() => _country = v!),
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.add_circle_outline_rounded),
-                  onPressed: () async {
-                    final name = await showAddItemDialog(
-                      context,
-                      title: 'Nuevo país',
-                    );
-                    if (name != null && name.isNotEmpty) {
-                      await state.addCountry(name);
-                      setState(() => _country = name);
-                    }
-                  },
-                ),
-              ],
-            ),
-            const SizedBox(height: AppSpacing.md),
-            TextFormField(
-              controller: _plannedCtrl,
-              keyboardType: const TextInputType.numberWithOptions(
-                decimal: true,
-              ),
-              decoration: const InputDecoration(
-                labelText: 'Valor planificado (USD)',
-                prefixText: '\$ ',
-              ),
-              validator: (v) {
-                if (v == null || v.trim().isEmpty) return 'Ingresa un valor';
-                if (double.tryParse(v.replaceAll(',', '.')) == null)
-                  return 'Valor inválido';
-                return null;
-              },
-            ),
-            const SizedBox(height: AppSpacing.md),
+            const SizedBox(height: AppSpacing.lg),
+
+            // ------- Más opciones (colapsable): resto de campos avanzados -------
             InkWell(
-              onTap: _pickDueDate,
-              child: InputDecorator(
+              onTap: () => setState(() => _moreOptions = !_moreOptions),
+              child: Row(
+                children: [
+                  Icon(
+                    _moreOptions
+                        ? Icons.expand_less_rounded
+                        : Icons.expand_more_rounded,
+                    size: 20,
+                    color: Theme.of(context).textTheme.bodySmall?.color,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    'Más opciones',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13,
+                      color: Theme.of(context).textTheme.bodySmall?.color,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (_moreOptions) ...[
+              const SizedBox(height: AppSpacing.md),
+              Row(
+                children: [
+                  Expanded(
+                    child: DropdownButtonFormField<String>(
+                      initialValue: subOptions.contains(_subcategory)
+                          ? _subcategory
+                          : null,
+                      decoration: const InputDecoration(
+                        labelText: 'Subcategoría',
+                      ),
+                      items: subOptions
+                          .map(
+                            (s) => DropdownMenuItem(value: s, child: Text(s)),
+                          )
+                          .toList(),
+                      onChanged: (v) => setState(() => _subcategory = v),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.add_circle_outline_rounded),
+                    onPressed: _category == null
+                        ? null
+                        : () async {
+                            final name = await showAddItemDialog(
+                              context,
+                              title: 'Nueva subcategoría',
+                            );
+                            if (name != null && name.isNotEmpty) {
+                              await state.addSubcategory(
+                                isExpense: true,
+                                category: _category!,
+                                subcategory: name,
+                              );
+                              setState(() => _subcategory = name);
+                            }
+                          },
+                  ),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.md),
+              Row(
+                children: [
+                  Expanded(
+                    child: DropdownButtonFormField<String>(
+                      initialValue: state.countries.contains(_country)
+                          ? _country
+                          : null,
+                      decoration: const InputDecoration(labelText: 'País'),
+                      items: state.countries
+                          .map(
+                            (c) => DropdownMenuItem(value: c, child: Text(c)),
+                          )
+                          .toList(),
+                      onChanged: (v) => setState(() => _country = v!),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.add_circle_outline_rounded),
+                    onPressed: () async {
+                      final name = await showAddItemDialog(
+                        context,
+                        title: 'Nuevo país',
+                      );
+                      if (name != null && name.isNotEmpty) {
+                        await state.addCountry(name);
+                        setState(() => _country = name);
+                      }
+                    },
+                  ),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.md),
+              InkWell(
+                onTap: _pickDueDate,
+                child: InputDecorator(
+                  decoration: const InputDecoration(
+                    labelText: 'Vencimiento (opcional)',
+                  ),
+                  child: Row(
+                    children: [
+                      Text(
+                        _dueDate != null
+                            ? formatFullDate(_dueDate!)
+                            : 'Sin definir',
+                      ),
+                      const Spacer(),
+                      const Icon(Icons.calendar_today_rounded, size: 18),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: AppSpacing.md),
+              const Text(
+                'Prioridad',
+                style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+              ),
+              const SizedBox(height: AppSpacing.sm),
+              Wrap(
+                spacing: AppSpacing.sm,
+                children: Priority.values
+                    .map(
+                      (p) => ChoiceChip(
+                        label: Text(p.label),
+                        selected: _priority == p,
+                        onSelected: (_) => setState(() => _priority = p),
+                      ),
+                    )
+                    .toList(),
+              ),
+              const SizedBox(height: AppSpacing.md),
+              DropdownButtonFormField<PaymentMethod>(
+                initialValue: _method,
+                decoration: const InputDecoration(labelText: 'Método de pago'),
+                items: PaymentMethod.values
+                    .map(
+                      (m) => DropdownMenuItem(value: m, child: Text(m.label)),
+                    )
+                    .toList(),
+                onChanged: (v) => setState(() => _method = v!),
+              ),
+              const SizedBox(height: AppSpacing.md),
+              TextFormField(
+                controller: _descCtrl,
+                maxLines: 3,
                 decoration: const InputDecoration(
-                  labelText: 'Vencimiento (opcional)',
-                ),
-                child: Row(
-                  children: [
-                    Text(
-                      _dueDate != null
-                          ? formatFullDate(_dueDate!)
-                          : 'Sin definir',
-                    ),
-                    const Spacer(),
-                    const Icon(Icons.calendar_today_rounded, size: 18),
-                  ],
+                  labelText: 'Descripción',
+                  alignLabelWithHint: true,
                 ),
               ),
-            ),
-            const SizedBox(height: AppSpacing.md),
-            const Text(
-              'Prioridad',
-              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            Wrap(
-              spacing: AppSpacing.sm,
-              children: Priority.values
-                  .map(
-                    (p) => ChoiceChip(
-                      label: Text(p.label),
-                      selected: _priority == p,
-                      onSelected: (_) => setState(() => _priority = p),
-                    ),
-                  )
-                  .toList(),
-            ),
-            const SizedBox(height: AppSpacing.md),
-            DropdownButtonFormField<PaymentMethod>(
-              initialValue: _method,
-              decoration: const InputDecoration(labelText: 'Método de pago'),
-              items: PaymentMethod.values
-                  .map((m) => DropdownMenuItem(value: m, child: Text(m.label)))
-                  .toList(),
-              onChanged: (v) => setState(() => _method = v!),
-            ),
-            const SizedBox(height: AppSpacing.md),
-            TextFormField(
-              controller: _descCtrl,
-              maxLines: 3,
-              decoration: const InputDecoration(
-                labelText: 'Descripción',
-                alignLabelWithHint: true,
-              ),
-            ),
+            ],
             const SizedBox(height: AppSpacing.xl),
             Row(
               children: [

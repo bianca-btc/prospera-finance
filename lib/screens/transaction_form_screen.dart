@@ -68,6 +68,17 @@ class _TransactionFormScreenState extends State<TransactionFormScreen> {
     super.dispose();
   }
 
+  /// Una transacción existente de tipo Inversión/Deuda fue generada
+  /// automáticamente desde su propia planificación (Aportar/Rescatar/
+  /// Realizar pago) y su vínculo (budgetItemId/debtId/goalId) no debe
+  /// reasignarse desde esta pantalla — solo se puede editar monto, fecha,
+  /// método, etc. El selector de plan queda oculto para evitar confusión
+  /// y roturas del vínculo.
+  bool get _isLockedType =>
+      widget.existing != null &&
+      widget.existing!.type != TxType.ingreso &&
+      widget.existing!.type != TxType.gasto;
+
   List<CategoryDef> _cats(AppState state) => state.categoriesFor(_type);
 
   void _ensureDefaults(AppState state) {
@@ -101,16 +112,16 @@ class _TransactionFormScreenState extends State<TransactionFormScreen> {
     if (picked != null) setState(() => _date = picked);
   }
 
-  /// Al seleccionar un plan existente en el primer campo, autocompleta tipo,
+  /// Al seleccionar un plan existente en el primer campo, autocompleta
   /// categoría, subcategoría, país y (si el monto está vacío) el valor
-  /// planificado — evitando duplicar el trabajo de planificación.
+  /// planificado — evitando duplicar el trabajo de planificación. El Tipo
+  /// ya no se infiere del plan: Nueva Transacción solo crea Ingreso/Gasto
+  /// (los movimientos de inversión/deuda se generan siempre desde dentro
+  /// de su propia planificación, nunca aquí).
   void _applyBudgetSelection(AppState state, BudgetItem? item) {
     setState(() {
       _selectedBudgetId = item?.id;
       if (item == null) return;
-      _type = item.linkedDebtId != null
-          ? TxType.deuda
-          : (item.linkedGoalId != null ? TxType.inversion : TxType.gasto);
       _category = item.category;
       _subcategory = item.subcategory;
       _country = item.country;
@@ -280,12 +291,21 @@ class _TransactionFormScreenState extends State<TransactionFormScreen> {
     String? goalId = widget.existing?.goalId;
 
     if (widget.existing != null) {
-      budgetItemId = _selectedBudgetId ?? widget.existing?.budgetItemId;
-      if (_selectedBudgetId != null) {
-        final match = state.budgets.where((b) => b.id == _selectedBudgetId);
-        if (match.isNotEmpty) {
-          debtId = match.first.linkedDebtId;
-          goalId = match.first.linkedGoalId;
+      if (_isLockedType) {
+        // Movimiento auto-generado (Aporte/Rescate/Pago): el vínculo con
+        // su plan/objetivo/deuda NUNCA se reasigna desde esta pantalla,
+        // sin importar el estado del selector (que además está oculto).
+        budgetItemId = widget.existing!.budgetItemId;
+        debtId = widget.existing!.debtId;
+        goalId = widget.existing!.goalId;
+      } else {
+        budgetItemId = _selectedBudgetId ?? widget.existing?.budgetItemId;
+        if (_selectedBudgetId != null) {
+          final match = state.budgets.where((b) => b.id == _selectedBudgetId);
+          if (match.isNotEmpty) {
+            debtId = match.first.linkedDebtId;
+            goalId = match.first.linkedGoalId;
+          }
         }
       }
     } else {
@@ -334,7 +354,14 @@ class _TransactionFormScreenState extends State<TransactionFormScreen> {
         ? currentCat.first.subcategories
         : <String>[];
 
-    final availablePlans = state.budgetsForMonth(YearMonth.fromDate(_date));
+    // Solo planes de Gasto normal (y "Otros") son seleccionables desde
+    // Nueva Transacción — los planes de Inversión/Deuda generan sus propios
+    // movimientos automáticos (Aportar/Rescatar/Realizar pago) y nunca
+    // deben recibir un gasto manual vinculado directamente.
+    final availablePlans = state
+        .budgetsForMonth(YearMonth.fromDate(_date))
+        .where((b) => !b.isDebtInstallment && !b.isGoalContribution)
+        .toList();
 
     return Scaffold(
       appBar: AppBar(
@@ -348,45 +375,80 @@ class _TransactionFormScreenState extends State<TransactionFormScreen> {
           padding: const EdgeInsets.all(AppSpacing.lg),
           children: [
             // ------- Campo 1: Plan de Planificación (primero, según D) -------
-            const Text(
-              'Plan de planificación',
-              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            DropdownButtonFormField<String>(
-              initialValue: availablePlans.any((b) => b.id == _selectedBudgetId)
-                  ? _selectedBudgetId
-                  : null,
-              decoration: const InputDecoration(
-                labelText: '¿Ya planificaste esto?',
-                helperText:
-                    'Selecciona un plan existente para autocompletar los '
-                    'demás campos, o déjalo en blanco si es nuevo.',
-                helperMaxLines: 2,
+            // Oculto para movimientos auto-generados (Aporte/Rescate/Pago):
+            // su vínculo con la planificación se gestiona únicamente desde
+            // dentro de esa planificación, nunca desde aquí.
+            if (!_isLockedType) ...[
+              const Text(
+                'Plan de planificación',
+                style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
               ),
-              items: [
-                const DropdownMenuItem<String>(
-                  value: null,
-                  child: Text('— Fuera de un plan / nuevo —'),
+              const SizedBox(height: AppSpacing.sm),
+              DropdownButtonFormField<String>(
+                initialValue:
+                    availablePlans.any((b) => b.id == _selectedBudgetId)
+                        ? _selectedBudgetId
+                        : null,
+                decoration: const InputDecoration(
+                  labelText: '¿Ya planificaste esto?',
+                  helperText:
+                      'Selecciona un plan existente para autocompletar los '
+                      'demás campos, o déjalo en blanco si es nuevo.',
+                  helperMaxLines: 2,
                 ),
-                ...availablePlans.map(
-                  (b) => DropdownMenuItem<String>(
-                    value: b.id,
-                    child: Text(
-                      '${b.category} · ${b.subcategory} (${formatUsd(b.planned, decimals: false)})',
-                      overflow: TextOverflow.ellipsis,
+                items: [
+                  const DropdownMenuItem<String>(
+                    value: null,
+                    child: Text('— Fuera de un plan / nuevo —'),
+                  ),
+                  ...availablePlans.map(
+                    (b) => DropdownMenuItem<String>(
+                      value: b.id,
+                      child: Text(
+                        '${b.category} · ${b.subcategory} (${formatUsd(b.planned, decimals: false)})',
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
                   ),
+                ],
+                onChanged: (v) {
+                  final item = v == null
+                      ? null
+                      : availablePlans.firstWhere((b) => b.id == v);
+                  _applyBudgetSelection(state, item);
+                },
+              ),
+              const SizedBox(height: AppSpacing.lg),
+            ] else ...[
+              Container(
+                padding: const EdgeInsets.all(AppSpacing.md),
+                decoration: BoxDecoration(
+                  color: AppColors.inversion.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: AppColors.inversion.withValues(alpha: 0.3),
+                  ),
                 ),
-              ],
-              onChanged: (v) {
-                final item = v == null
-                    ? null
-                    : availablePlans.firstWhere((b) => b.id == v);
-                _applyBudgetSelection(state, item);
-              },
-            ),
-            const SizedBox(height: AppSpacing.lg),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.link_rounded,
+                      size: 18,
+                      color: AppColors.inversion,
+                    ),
+                    const SizedBox(width: AppSpacing.sm),
+                    Expanded(
+                      child: Text(
+                        'Este movimiento está vinculado automáticamente a su '
+                        'planificación y no puede reasignarse aquí.',
+                        style: TextStyle(fontSize: 12.5, color: AppColors.inversion),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: AppSpacing.lg),
+            ],
 
             // ------- Campos obligatorios -------
             const Text(
@@ -396,20 +458,50 @@ class _TransactionFormScreenState extends State<TransactionFormScreen> {
             const SizedBox(height: AppSpacing.sm),
             Wrap(
               spacing: AppSpacing.sm,
-              children: TxType.values.map((t) {
+              // Nueva Transacción solo admite Ingreso/Gasto — los
+              // movimientos de Inversión (Aporte/Rescate) y Deuda (Pago)
+              // se generan siempre desde dentro de su propia
+              // planificación, nunca aquí. Si se está EDITANDO un
+              // movimiento auto-generado (tipo inversión/deuda), se
+              // muestra ese chip también pero sin permitir cambiar HACIA
+              // esos tipos desde una transacción nueva.
+              children: {
+                TxType.ingreso,
+                TxType.gasto,
+                if (widget.existing != null) widget.existing!.type,
+              }.map((t) {
                 final selected = _type == t;
+                final isEditableType =
+                    t == TxType.ingreso || t == TxType.gasto;
                 return ChoiceChip(
-                  label: Text(t.label),
+                  label: Text(
+                    isEditableType ? t.label : widget.existing!.movementTypeLabel,
+                  ),
                   selected: selected,
-                  onSelected: (_) => setState(() {
-                    _type = t;
-                    _category = null;
-                    _subcategory = null;
-                    _selectedBudgetId = null;
-                  }),
+                  onSelected: isEditableType
+                      ? (_) => setState(() {
+                          _type = t;
+                          _category = null;
+                          _subcategory = null;
+                          _selectedBudgetId = null;
+                        })
+                      : null,
                 );
               }).toList(),
             ),
+            if (widget.existing != null &&
+                widget.existing!.type != TxType.ingreso &&
+                widget.existing!.type != TxType.gasto) ...[
+              const SizedBox(height: AppSpacing.sm),
+              Text(
+                'Este movimiento fue generado automáticamente desde su '
+                'planificación y no puede cambiar de tipo aquí.',
+                style: TextStyle(
+                  fontSize: 11.5,
+                  color: Theme.of(context).textTheme.bodySmall?.color,
+                ),
+              ),
+            ],
             const SizedBox(height: AppSpacing.lg),
             // Categoría y Subcategoría siempre adyacentes (F).
             Row(

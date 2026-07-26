@@ -735,7 +735,13 @@ class AppState extends ChangeNotifier {
           b.year == ym.year &&
           b.month == ym.month &&
           b.category == txn.category &&
-          b.subcategory == txn.subcategory,
+          b.subcategory == txn.subcategory &&
+          // Nunca sugerir un plan de Inversión/Deuda: esos solo reciben
+          // movimientos generados desde su propia planificación (Aportar/
+          // Rescatar/Realizar pago), jamás un gasto manual coincidente por
+          // categoría+subcategoría.
+          !b.isDebtInstallment &&
+          !b.isGoalContribution,
     );
     if (candidates.isEmpty) return null;
     return candidates.first;

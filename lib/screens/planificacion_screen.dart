@@ -28,28 +28,26 @@ class _PlanificacionScreenState extends State<PlanificacionScreen> {
     final periods = state.selectedPeriods;
     final budgets = state.budgets
         .where((b) => periods.contains(YearMonth(b.year, b.month)))
+        // Los planes de Inversión/Deuda tienen su propia tarjeta especial
+        // (_DebtTile/_GoalTile) más abajo — aquí solo se listan los planes
+        // de Gasto normal (incluye "Otros").
+        .where((b) => !b.isDebtInstallment && !b.isGoalContribution)
         .toList();
-    final txns = state.txnsForSelectedPeriods;
     final debts = state.debts;
 
-    // Agrupa realizado por categoria+subcategoria (apenas gastos/deudas).
-    double realizadoFor(BudgetItem b) {
-      return txns
-          .where(
-            (t) =>
-                (t.type == TxType.gasto || t.type == TxType.deuda) &&
-                t.category == b.category &&
-                t.subcategory == b.subcategory,
-          )
-          .fold(0.0, (s, t) => s + t.amount);
-    }
+    // Fuente única de verdad: mismo cálculo que usa el resto del app
+    // (por budgetItemId, con fallback a categoría+subcategoría solo para
+    // transacciones sin vínculo explícito) — evita duplicar lógica y
+    // asegura que reasignar una transacción de "Otros" a otro plan
+    // actualice ambos indicadores correctamente.
+    double realizadoFor(BudgetItem b) => state.realizadoForBudgetItem(b);
 
     return Scaffold(
       backgroundColor: Colors.transparent,
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => _showAddMenu(context),
         icon: const Icon(Icons.add_rounded),
-        label: const Text('Agregar'),
+        label: const Text('Nueva planificación'),
       ),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(
@@ -140,18 +138,48 @@ class _PlanificacionScreenState extends State<PlanificacionScreen> {
     );
   }
 
+  /// Único punto de entrada para crear una nueva Planificación: el usuario
+  /// primero elige el TIPO (Gasto normal / Inversión / Deuda) — sustituye
+  /// los 3 botones separados de antes por una sola acción "Nueva
+  /// Planificación", reforzando que todo lo que aquí se crea es un plan
+  /// ("por qué organizo mi dinero"), nunca un movimiento suelto.
   void _showAddMenu(BuildContext context) {
     showModalBottomSheet(
       context: context,
       builder: (ctx) => SafeArea(
         child: Wrap(
           children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(
+                AppSpacing.lg,
+                AppSpacing.lg,
+                AppSpacing.lg,
+                AppSpacing.sm,
+              ),
+              child: Text(
+                'Nueva Planificación',
+                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
+              ),
+            ),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(
+                AppSpacing.lg,
+                0,
+                AppSpacing.lg,
+                AppSpacing.sm,
+              ),
+              child: Text(
+                '¿Qué tipo de planificación quieres crear?',
+                style: TextStyle(fontSize: 12.5, color: Colors.white70),
+              ),
+            ),
             ListTile(
               leading: const Icon(
                 Icons.request_page_outlined,
                 color: AppColors.gasto,
               ),
-              title: const Text('Nuevo ítem de presupuesto'),
+              title: const Text('Gasto normal'),
+              subtitle: const Text('Presupuesto mensual para una categoría'),
               onTap: () {
                 Navigator.pop(ctx);
                 Navigator.of(context).push(
@@ -161,27 +189,29 @@ class _PlanificacionScreenState extends State<PlanificacionScreen> {
             ),
             ListTile(
               leading: const Icon(
-                Icons.account_balance_outlined,
-                color: AppColors.deuda,
+                Icons.flag_outlined,
+                color: AppColors.inversion,
               ),
-              title: const Text('Nueva deuda'),
+              title: const Text('Inversión'),
+              subtitle: const Text('Meta de ahorro/inversión con aporte mensual'),
               onTap: () {
                 Navigator.pop(ctx);
                 Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const DebtFormScreen()),
+                  MaterialPageRoute(builder: (_) => const GoalFormScreen()),
                 );
               },
             ),
             ListTile(
               leading: const Icon(
-                Icons.flag_outlined,
+                Icons.account_balance_outlined,
                 color: AppColors.inversion,
               ),
-              title: const Text('Nuevo objetivo de inversión'),
+              title: const Text('Deuda'),
+              subtitle: const Text('Deuda con cuotas mensuales automáticas'),
               onTap: () {
                 Navigator.pop(ctx);
                 Navigator.of(context).push(
-                  MaterialPageRoute(builder: (_) => const GoalFormScreen()),
+                  MaterialPageRoute(builder: (_) => const DebtFormScreen()),
                 );
               },
             ),
@@ -768,6 +798,50 @@ class _DebtTile extends StatelessWidget {
   final Debt debt;
   const _DebtTile({required this.debt});
 
+  /// "Realizar pago": permite un monto libre (pago parcial, adelanto, o
+  /// la cuota completa) — pre-rellenado con la cuota mensual calculada.
+  /// Nunca se crea como gasto manual; siempre queda vinculado a la deuda.
+  Future<void> _showPayDialog(BuildContext context) async {
+    final ctrl = TextEditingController(
+      text: debt.monthlyInstallment > 0
+          ? debt.monthlyInstallment.toStringAsFixed(2)
+          : '',
+    );
+    final amount = await showDialog<double>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Realizar pago · ${debt.name}'),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          decoration: InputDecoration(
+            labelText: 'Valor (USD)',
+            prefixText: '\$ ',
+            helperText:
+                'Pendiente: ${formatUsd(debt.remainingAmount, decimals: false)}',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final v = double.tryParse(ctrl.text.replaceAll(',', '.'));
+              Navigator.pop(ctx, v);
+            },
+            child: const Text('Pagar'),
+          ),
+        ],
+      ),
+    );
+    if (amount != null && amount > 0 && context.mounted) {
+      await context.read<AppState>().payDebt(debt.id, amount);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final progress = debt.progress;
@@ -783,7 +857,7 @@ class _DebtTile extends StatelessWidget {
               children: [
                 const CategoryIcon(
                   iconKey: 'account_balance',
-                  color: AppColors.deuda,
+                  color: AppColors.inversion,
                   size: 36,
                 ),
                 const SizedBox(width: AppSpacing.md),
@@ -817,9 +891,7 @@ class _DebtTile extends StatelessWidget {
                   )
                 else
                   OutlinedButton(
-                    onPressed: () => context
-                        .read<AppState>()
-                        .markNextInstallmentPaid(debt.id),
+                    onPressed: () => _showPayDialog(context),
                     style: OutlinedButton.styleFrom(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 10,
@@ -827,7 +899,7 @@ class _DebtTile extends StatelessWidget {
                       ),
                     ),
                     child: const Text(
-                      'Pagar cuota',
+                      'Realizar pago',
                       style: TextStyle(fontSize: 11.5),
                     ),
                   ),
@@ -894,6 +966,47 @@ class _GoalTile extends StatelessWidget {
     }
   }
 
+  /// "Rescatar dinero": retira parte (o todo) el acumulado de la
+  /// inversión. Nunca se crea como gasto manual; siempre disminuye el
+  /// saldo de la inversión y aumenta el saldo disponible del usuario,
+  /// dejando un movimiento en el historial (Rescate de inversión).
+  Future<void> _showWithdrawDialog(BuildContext context) async {
+    final ctrl = TextEditingController();
+    final amount = await showDialog<double>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Rescatar de "${goal.name}"'),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          decoration: InputDecoration(
+            labelText: 'Valor (USD)',
+            prefixText: '\$ ',
+            helperText:
+                'Disponible: ${formatUsd(goal.currentAmount, decimals: false)}',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final v = double.tryParse(ctrl.text.replaceAll(',', '.'));
+              Navigator.pop(ctx, v);
+            },
+            child: const Text('Rescatar'),
+          ),
+        ],
+      ),
+    );
+    if (amount != null && amount > 0 && context.mounted) {
+      await context.read<AppState>().withdrawFromGoal(goal.id, amount);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final completed = goal.isCompleted;
@@ -942,18 +1055,45 @@ class _GoalTile extends StatelessWidget {
                     size: 20,
                   )
                 else
-                  OutlinedButton(
-                    onPressed: () => _showContributeDialog(context),
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 4,
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      OutlinedButton(
+                        onPressed: () => _showContributeDialog(context),
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 4,
+                          ),
+                          minimumSize: const Size(0, 30),
+                        ),
+                        child: const Text(
+                          'Aportar',
+                          style: TextStyle(fontSize: 11.5),
+                        ),
                       ),
-                    ),
-                    child: const Text(
-                      'Aportar',
-                      style: TextStyle(fontSize: 11.5),
-                    ),
+                      if (goal.currentAmount > 0) ...[
+                        const SizedBox(height: 4),
+                        OutlinedButton(
+                          onPressed: () => _showWithdrawDialog(context),
+                          style: OutlinedButton.styleFrom(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 4,
+                            ),
+                            minimumSize: const Size(0, 30),
+                            side: const BorderSide(color: AppColors.gasto),
+                          ),
+                          child: const Text(
+                            'Rescatar',
+                            style: TextStyle(
+                              fontSize: 11.5,
+                              color: AppColors.gasto,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
               ],
             ),
