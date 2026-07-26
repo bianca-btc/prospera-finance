@@ -67,10 +67,10 @@ class GoogleAuthService extends ChangeNotifier {
       // `AppState.init()`, para poder esperar su resultado antes de
       // decidir si hay que restaurar datos desde Google Sheets o
       // cargar los datos semilla locales.
-    } catch (e) {
+    } catch (e, st) {
       _lastError = e.toString();
       if (kDebugMode) {
-        debugPrint('GoogleAuthService.initialize error: $e');
+        debugPrint('GoogleAuthService.initialize ERROR: $e\n$st');
       }
     } finally {
       _initializing = false;
