@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 
 import '../models/enums.dart';
 import '../models/taxonomy.dart';
+import '../models/transaction.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
 import '../utils/formatters.dart';
@@ -396,12 +397,21 @@ class _AutoSummary extends StatelessWidget {
     final prevGastos = prevTxns
         .where((t) => t.type == TxType.gasto || t.type == TxType.deuda)
         .fold(0.0, (s, t) => s + t.amount);
-    final invActual = txns
-        .where((t) => t.type == TxType.inversion)
-        .fold(0.0, (s, t) => s + t.amount);
-    final invPrev = prevTxns
-        .where((t) => t.type == TxType.inversion)
-        .fold(0.0, (s, t) => s + t.amount);
+    // Inversión NETA (aportes - rescates): un rescate no debe contarse como
+    // "inversión hecha", ya que representa dinero que volvió al saldo
+    // disponible del usuario (misma semántica que AppState.totalInversiones).
+    double netInversion(List<Txn> list) {
+      final aportes = list
+          .where((t) => t.type == TxType.inversion && !t.isWithdrawal)
+          .fold(0.0, (s, t) => s + t.amount);
+      final rescates = list
+          .where((t) => t.type == TxType.inversion && t.isWithdrawal)
+          .fold(0.0, (s, t) => s + t.amount);
+      return aportes - rescates;
+    }
+
+    final invActual = netInversion(txns);
+    final invPrev = netInversion(prevTxns);
 
     String growthPhrase = '';
     if (total > 0 && prevGastos > 0) {

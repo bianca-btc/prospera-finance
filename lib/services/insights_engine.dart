@@ -47,6 +47,19 @@ class InsightsEngine {
   double _sumByType(List<Txn> txns, TxType type) =>
       txns.where((t) => t.type == type).fold(0.0, (s, t) => s + t.amount);
 
+  /// Inversión NETA (aportes - rescates) — un rescate devuelve dinero al
+  /// saldo disponible, por lo que debe restar de la inversión total en vez
+  /// de sumar (misma semántica que [AppState.totalInversiones]).
+  double _netInversion(List<Txn> txns) {
+    final aportes = txns
+        .where((t) => t.type == TxType.inversion && !t.isWithdrawal)
+        .fold(0.0, (s, t) => s + t.amount);
+    final rescates = txns
+        .where((t) => t.type == TxType.inversion && t.isWithdrawal)
+        .fold(0.0, (s, t) => s + t.amount);
+    return aportes - rescates;
+  }
+
   Controllability _controllabilityOf(String category, String subcategory) {
     final match = expenseCategories.where((c) => c.name == category);
     if (match.isEmpty) return Controllability.semiControlable;
@@ -64,14 +77,13 @@ class InsightsEngine {
     final ingresos = _sumByType(txns, TxType.ingreso);
     final gastos =
         _sumByType(txns, TxType.gasto) + _sumByType(txns, TxType.deuda);
-    final inversiones = _sumByType(txns, TxType.inversion);
+    final inversiones = _netInversion(txns);
     final balance = ingresos - gastos - inversiones;
 
     final prevIngresos = _sumByType(prevTxns, TxType.ingreso);
     final prevGastos =
         _sumByType(prevTxns, TxType.gasto) + _sumByType(prevTxns, TxType.deuda);
-    final prevBalance =
-        prevIngresos - prevGastos - _sumByType(prevTxns, TxType.inversion);
+    final prevBalance = prevIngresos - prevGastos - _netInversion(prevTxns);
 
     final hasPrevData = prevTxns.isNotEmpty;
 
