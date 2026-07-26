@@ -137,7 +137,7 @@ class _TxnTile extends StatelessWidget {
       case TxType.gasto:
         return AppColors.gasto;
       case TxType.deuda:
-        return AppColors.inversion;
+        return AppColors.deuda;
       case TxType.inversion:
         return AppColors.inversion;
     }

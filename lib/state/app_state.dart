@@ -587,6 +587,26 @@ class AppState extends ChangeNotifier {
 
   void selectLastNMonths(int n) => setSelectedRange(PeriodRange.lastNMonths(n));
 
+  /// Garante que [ym] esteja incluído no período selecionado, expandindo o
+  /// intervalo automaticamente se necessário. Usado pelas ações rápidas
+  /// (Aportar/Rescatar/Pagar deuda), que sempre registram el movimiento con
+  /// la fecha de HOY: sin esto, si el usuario está viendo un período
+  /// histórico (ej. datos de demostración de un año anterior) que no
+  /// incluye el mes actual, el movimiento se crea correctamente (la
+  /// Deuda/Objetivo se actualiza) pero el KPI header — que sí filtra por
+  /// [selectedPeriods] — nunca mostraría el cambio, dando la falsa
+  /// impresión de que el rescate/aporte/pago "no funcionó".
+  void _ensurePeriodIncludes(YearMonth ym) {
+    if (_selectedRange.monthSet.contains(ym)) return;
+    final s = _selectedRange.start.compareTo(ym) <= 0
+        ? _selectedRange.start
+        : ym;
+    final e = _selectedRange.end.compareTo(ym) >= 0
+        ? _selectedRange.end
+        : ym;
+    setSelectedRange(PeriodRange(s, e));
+  }
+
   /// Todos os anos conhecidos (com dados) + o ano atual, para popular o
   /// seletor sem jamais limitar os anos disponíveis (o usuário sempre pode
   /// digitar/escolher qualquer ano manualmente na UI, mas isto alimenta os
@@ -1027,6 +1047,12 @@ class AppState extends ChangeNotifier {
     final country = goal.country.isNotEmpty
         ? goal.country
         : (_countries.isNotEmpty ? _countries.first : 'El Salvador');
+    final now = DateTime.now();
+    // Asegura que el KPI header/análisis (que filtran por período
+    // seleccionado) muestren el impacto de este aporte de inmediato,
+    // aunque el usuario esté viendo un período histórico distinto al mes
+    // actual.
+    _ensurePeriodIncludes(YearMonth.fromDate(now));
     await addTxn(
       Txn(
         id: _uuid.v4(),
@@ -1036,7 +1062,7 @@ class AppState extends ChangeNotifier {
         category: goal.category,
         subcategory: goal.subcategory.isNotEmpty ? goal.subcategory : goal.name,
         amount: amount,
-        date: DateTime.now(),
+        date: now,
         description: 'Aporte ${goal.name}',
         goalId: goal.id,
         isWithdrawal: false,
@@ -1063,6 +1089,11 @@ class AppState extends ChangeNotifier {
     final country = goal.country.isNotEmpty
         ? goal.country
         : (_countries.isNotEmpty ? _countries.first : 'El Salvador');
+    final now = DateTime.now();
+    // Ver comentario equivalente en [contributeToGoal]: garantiza que el
+    // KPI header refleje el rescate de inmediato, aunque el período
+    // seleccionado sea histórico.
+    _ensurePeriodIncludes(YearMonth.fromDate(now));
     await addTxn(
       Txn(
         id: _uuid.v4(),
@@ -1072,7 +1103,7 @@ class AppState extends ChangeNotifier {
         category: goal.category,
         subcategory: goal.subcategory.isNotEmpty ? goal.subcategory : goal.name,
         amount: safeAmount,
-        date: DateTime.now(),
+        date: now,
         description: 'Rescate ${goal.name}',
         goalId: goal.id,
         isWithdrawal: true,
@@ -1184,6 +1215,11 @@ class AppState extends ChangeNotifier {
         ? debt.remainingAmount
         : amount;
     if (safeAmount <= 0) return;
+    final now = DateTime.now();
+    // Ver comentario equivalente en [contributeToGoal]/[withdrawFromGoal]:
+    // garantiza que el KPI header refleje el pago de inmediato, aunque el
+    // período seleccionado sea histórico.
+    _ensurePeriodIncludes(YearMonth.fromDate(now));
     await addTxn(
       Txn(
         id: _uuid.v4(),
@@ -1193,7 +1229,7 @@ class AppState extends ChangeNotifier {
         category: debt.category,
         subcategory: debt.subcategory,
         amount: safeAmount,
-        date: DateTime.now(),
+        date: now,
         description: 'Pago ${debt.name}',
         debtId: debt.id,
       ),

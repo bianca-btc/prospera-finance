@@ -24,19 +24,6 @@ class KpiHeader extends StatelessWidget {
     this.compact = false,
   });
 
-  Color _levelColor(BudgetProgressLevel level) {
-    switch (level) {
-      case BudgetProgressLevel.verde:
-        return AppColors.ingreso;
-      case BudgetProgressLevel.amarillo:
-        return AppColors.warning;
-      case BudgetProgressLevel.naranja:
-        return AppColors.naranja;
-      case BudgetProgressLevel.rojo:
-        return AppColors.gasto;
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
@@ -48,7 +35,6 @@ class KpiHeader extends StatelessWidget {
 
     final plannedGastos = state.plannedGastosSelected;
     final gastosRatio = state.gastosExecutedRatio;
-    final gastosColor = _levelColor(state.gastosProgressLevel);
 
     final plannedInversion = state.investmentGoalPlannedSelected;
     final inversionRatio = state.investmentExecutedRatio;
@@ -131,8 +117,11 @@ class KpiHeader extends StatelessWidget {
                     onTap: onGastosTap,
                     progress: plannedGastos > 0
                         ? _KpiProgress(
+                            // La barra de Gastos siempre es roja
+                            // (AppColors.gasto), sin importar el nivel de
+                            // progreso alcanzado.
                             ratio: gastosRatio,
-                            color: gastosColor,
+                            color: AppColors.gasto,
                             caption:
                                 '${formatUsd(gastos, decimals: false)}/${formatUsd(plannedGastos, decimals: false)}',
                           )
@@ -148,12 +137,11 @@ class KpiHeader extends StatelessWidget {
                     onTap: onInversionesTap,
                     progress: plannedInversion > 0
                         ? _KpiProgress(
+                            // La barra de Inversiones siempre es azul
+                            // (AppColors.inversion), sin importar si la
+                            // meta fue alcanzada o superada.
                             ratio: inversionRatio,
-                            color: metaSuperada
-                                ? AppColors.inversion
-                                : (metaConcluida
-                                      ? AppColors.ingreso
-                                      : AppColors.inversion),
+                            color: AppColors.inversion,
                             caption: metaSuperada
                                 ? 'Meta superada'
                                 : metaConcluida

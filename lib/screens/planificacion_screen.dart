@@ -216,7 +216,7 @@ class _PlanificacionScreenState extends State<PlanificacionScreen> {
             ListTile(
               leading: const Icon(
                 Icons.account_balance_outlined,
-                color: AppColors.inversion,
+                color: AppColors.deuda,
               ),
               title: const Text('Deuda'),
               subtitle: const Text('Deuda con cuotas mensuales automáticas'),
@@ -687,11 +687,13 @@ class _BudgetTileState extends State<_BudgetTile> {
     final overflow = realizado > b.planned;
     final covered = b.planned > 0 && realizado >= b.planned - 0.01;
     // Color de la barra según el tipo de línea: azul para aportes de
-    // inversión/objetivo, rojo para gasto/deuda — igual criterio pedido
-    // para las transacciones.
+    // inversión/objetivo, amarillo/naranja para cuotas de deuda,
+    // rojo para gasto normal.
     final barColor = b.isGoalContribution
         ? AppColors.inversion
-        : AppColors.gasto;
+        : b.isDebtInstallment
+            ? AppColors.deuda
+            : AppColors.gasto;
     final mutedColor = Theme.of(context).textTheme.bodySmall?.color;
 
     return SectionCard(
@@ -971,7 +973,7 @@ class _DebtTile extends StatelessWidget {
               children: [
                 const CategoryIcon(
                   iconKey: 'account_balance',
-                  color: AppColors.inversion,
+                  color: AppColors.deuda,
                   size: 32,
                 ),
                 const SizedBox(width: AppSpacing.sm),
@@ -1002,7 +1004,7 @@ class _DebtTile extends StatelessWidget {
                     style: const TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w800,
-                      color: AppColors.inversion,
+                      color: AppColors.deuda,
                     ),
                   ),
                 ),
@@ -1011,7 +1013,7 @@ class _DebtTile extends StatelessWidget {
             const SizedBox(height: AppSpacing.sm),
             ProgressBarWithOverflow(
               value: progress,
-              color: AppColors.inversion,
+              color: AppColors.deuda,
               height: 8,
             ),
             const SizedBox(height: 6),
@@ -1034,7 +1036,7 @@ class _DebtTile extends StatelessWidget {
                       )
                     : _StatusChip(
                         label: '${debt.paidInstallments}/${debt.months}',
-                        color: AppColors.inversion,
+                        color: AppColors.deuda,
                         icon: Icons.hourglass_bottom_rounded,
                       ),
               ],

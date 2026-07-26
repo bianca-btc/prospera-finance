@@ -456,15 +456,15 @@ class _MonthlyInstallmentPreviewCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(AppSpacing.lg),
       decoration: BoxDecoration(
-        color: AppColors.inversion.withValues(alpha: 0.12),
+        color: AppColors.deuda.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppColors.inversion.withValues(alpha: 0.35)),
+        border: Border.all(color: AppColors.deuda.withValues(alpha: 0.35)),
       ),
       child: Row(
         children: [
           const Icon(
             Icons.calculate_outlined,
-            color: AppColors.inversion,
+            color: AppColors.deuda,
             size: 22,
           ),
           const SizedBox(width: AppSpacing.md),
@@ -482,7 +482,7 @@ class _MonthlyInstallmentPreviewCard extends StatelessWidget {
                   style: const TextStyle(
                     fontSize: 20,
                     fontWeight: FontWeight.w700,
-                    color: AppColors.inversion,
+                    color: AppColors.deuda,
                   ),
                 ),
               ],
