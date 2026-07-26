@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:math';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
 
@@ -13,6 +15,8 @@ import '../models/collaborator.dart';
 import '../services/storage_service.dart';
 import '../services/seed_data.dart';
 import '../services/insights_engine.dart';
+import '../services/google_auth_service.dart';
+import '../services/google_sheets_service.dart';
 import '../utils/period.dart';
 
 const _uuid = Uuid();
@@ -57,6 +61,29 @@ BudgetProgressLevel budgetProgressLevelFor(double ratio) {
 class AppState extends ChangeNotifier {
   final StorageService storage;
   AppState(this.storage);
+
+  // ---------------- Sincronización con Google Sheets ----------------
+  final GoogleAuthService googleAuth = GoogleAuthService();
+  late final GoogleSheetsService googleSheets = GoogleSheetsService(
+    googleAuth,
+  );
+  Timer? _cloudSyncDebounce;
+  bool _cloudSyncInProgress = false;
+  bool _suppressNextCloudSync = false;
+  bool _prevGoogleSignedIn = false;
+  DateTime? _lastCloudSyncAt;
+  String? _cloudSyncError;
+  bool _pendingRemoteBackupFound = false;
+  DateTime? _pendingRemoteBackupUpdatedAt;
+
+  bool get googleConfigured => googleAuth.isConfigured;
+  bool get googleSignedIn => googleAuth.isSignedIn;
+  String? get googleUserEmail => googleAuth.currentUser?.email;
+  bool get cloudSyncInProgress => _cloudSyncInProgress;
+  DateTime? get lastCloudSyncAt => _lastCloudSyncAt;
+  String? get cloudSyncError => _cloudSyncError;
+  bool get pendingRemoteBackupFound => _pendingRemoteBackupFound;
+  DateTime? get pendingRemoteBackupUpdatedAt => _pendingRemoteBackupUpdatedAt;
 
   List<Txn> _txns = [];
   List<BudgetItem> _budgets = [];
@@ -105,6 +132,41 @@ class AppState extends ChangeNotifier {
   // ---------------- Inicialização ----------------
   Future<void> init() async {
     await storage.init();
+
+    // ---- Sincronização com Google Sheets ----
+    // Inicializa o SDK do Google (não faz nada se não houver Client
+    // ID configurado — ver lib/config/google_config.dart) e tenta
+    // reconectar a sessão salva silenciosamente. Se a instalação é
+    // nova (nunca foi "semeada" localmente) e o usuário já tem uma
+    // sessão Google válida, busca um respaldo existente no Google
+    // Sheets ANTES de carregar os dados de exemplo — é assim que os
+    // dados "se recuperam automaticamente" ao reinstalar o app.
+    await googleAuth.initialize();
+    bool importedFromCloud = false;
+    if (googleAuth.isConfigured) {
+      try {
+        await googleAuth.attemptSilentSignIn();
+      } catch (_) {
+        // Falha silenciosa: segue no modo local normalmente.
+      }
+      if (googleAuth.isSignedIn && !storage.isSeeded) {
+        try {
+          final remote = await googleSheets.downloadSnapshot(
+            interactive: false,
+          );
+          if (remote != null) {
+            await storage.importAll(remote);
+            await storage.setSeeded();
+            importedFromCloud = true;
+          }
+        } catch (e) {
+          _cloudSyncError = e.toString();
+          if (kDebugMode) {
+            debugPrint('Restauração desde Google Sheets falhou: $e');
+          }
+        }
+      }
+    }
 
     _themeMode = storage.loadThemeMode() == 'light'
         ? ThemeMode.light
@@ -156,7 +218,174 @@ class AppState extends ChangeNotifier {
     }
 
     _loading = false;
+    _prevGoogleSignedIn = googleAuth.isSignedIn;
     notifyListeners();
+
+    // Escuta futuras conexões/desconexões de la cuenta Google (por
+    // ejemplo, si el usuario se conecta más tarde desde Ajustes) para
+    // disparar la primera sincronización automáticamente.
+    googleAuth.addListener(_onGoogleAuthChanged);
+
+    if (googleAuth.isSignedIn && !importedFromCloud) {
+      // Ya había sesión (o se restauró silenciosamente) pero no se
+      // encontró/usó un respaldo remoto (por ejemplo, ya existían
+      // datos locales) — sube el estado local para que Google Sheets
+      // quede al día desde el primer momento.
+      scheduleCloudSync(immediate: true);
+    }
+  }
+
+  void _onGoogleAuthChanged() {
+    final nowSignedIn = googleAuth.isSignedIn;
+    if (nowSignedIn && !_prevGoogleSignedIn) {
+      // El usuario acaba de conectar su cuenta Google: sube el
+      // estado local actual de inmediato para dejar el respaldo
+      // creado/actualizado.
+      scheduleCloudSync(immediate: true);
+    }
+    _prevGoogleSignedIn = nowSignedIn;
+    notifyListeners();
+  }
+
+  /// Debe llamarse justo después de un inicio de sesión exitoso
+  /// disparado manualmente desde la UI (botón "Conectar con
+  /// Google"). Comprueba si ya existe un respaldo remoto: si lo hay,
+  /// deja la decisión de restaurarlo (o no) en manos de la UI
+  /// (`pendingRemoteBackupFound`/`restoreNowFromGoogleSheets`), para
+  /// no sobrescribir datos locales sin que el usuario lo confirme. Si
+  /// no hay ningún respaldo todavía, sube el estado local de una vez
+  /// para crearlo.
+  Future<void> syncAfterGoogleConnected() async {
+    try {
+      final updatedAt = await googleSheets.lastUpdatedAt(interactive: true);
+      if (updatedAt != null) {
+        _pendingRemoteBackupFound = true;
+        _pendingRemoteBackupUpdatedAt = updatedAt;
+        notifyListeners();
+        return;
+      }
+    } catch (e) {
+      _cloudSyncError = e.toString();
+    }
+    await syncNowWithGoogleSheets(interactive: true);
+  }
+
+  /// El usuario decidió, tras ver el aviso de respaldo remoto
+  /// encontrado, DESCARTAR ese respaldo y mantener/subir sus datos
+  /// locales actuales en su lugar.
+  Future<void> dismissPendingRemoteBackupAndKeepLocal() async {
+    _pendingRemoteBackupFound = false;
+    _pendingRemoteBackupUpdatedAt = null;
+    await syncNowWithGoogleSheets(interactive: true);
+  }
+
+  /// El usuario decidió restaurar el respaldo remoto encontrado
+  /// (sobrescribiendo los datos locales actuales).
+  Future<bool> acceptPendingRemoteBackup() async {
+    _pendingRemoteBackupFound = false;
+    _pendingRemoteBackupUpdatedAt = null;
+    return restoreNowFromGoogleSheets(interactive: true);
+  }
+
+  /// Programa (con un pequeño "debounce") una subida del snapshot
+  /// completo a Google Sheets. Se llama automáticamente después de
+  /// cada cambio de datos (ver [notifyListeners] sobrescrito abajo),
+  /// para que la sincronización sea invisible para el usuario.
+  void scheduleCloudSync({bool immediate = false}) {
+    if (!googleAuth.isSignedIn) return;
+    _cloudSyncDebounce?.cancel();
+    if (immediate) {
+      unawaited(syncNowWithGoogleSheets());
+      return;
+    }
+    _cloudSyncDebounce = Timer(
+      const Duration(seconds: 3),
+      () => unawaited(syncNowWithGoogleSheets()),
+    );
+  }
+
+  /// Sube inmediatamente (sin esperar el debounce) el snapshot
+  /// completo de datos a la hoja de Google Sheets del usuario.
+  Future<bool> syncNowWithGoogleSheets({bool interactive = false}) async {
+    if (!googleAuth.isSignedIn) return false;
+    if (_cloudSyncInProgress) return false;
+    _cloudSyncInProgress = true;
+    _cloudSyncError = null;
+    notifyListeners();
+    try {
+      final snapshot = storage.exportAll();
+      await googleSheets.uploadSnapshot(snapshot, interactive: interactive);
+      _lastCloudSyncAt = DateTime.now();
+      _cloudSyncError = null;
+      return true;
+    } catch (e) {
+      _cloudSyncError = e.toString();
+      if (kDebugMode) {
+        debugPrint('syncNowWithGoogleSheets error: $e');
+      }
+      return false;
+    } finally {
+      _cloudSyncInProgress = false;
+      notifyListeners();
+    }
+  }
+
+  /// Descarga el respaldo remoto y lo aplica localmente,
+  /// reemplazando los datos actuales del dispositivo. Debe usarse
+  /// solo cuando el usuario lo pide explícitamente (por ejemplo,
+  /// botón "Restaurar desde Google Sheets" en Ajustes), ya que
+  /// sobrescribe lo que haya en el dispositivo.
+  Future<bool> restoreNowFromGoogleSheets({bool interactive = true}) async {
+    if (!googleAuth.isSignedIn) return false;
+    _cloudSyncInProgress = true;
+    _cloudSyncError = null;
+    notifyListeners();
+    try {
+      final remote = await googleSheets.downloadSnapshot(
+        interactive: interactive,
+      );
+      if (remote == null) {
+        _cloudSyncError = 'No se encontró ningún respaldo en Google Sheets.';
+        return false;
+      }
+      _suppressNextCloudSync = true;
+      await importSnapshot(remote);
+      _lastCloudSyncAt = DateTime.now();
+      return true;
+    } catch (e) {
+      _cloudSyncError = e.toString();
+      return false;
+    } finally {
+      _cloudSyncInProgress = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> disconnectGoogle() async {
+    _cloudSyncDebounce?.cancel();
+    await googleAuth.signOut();
+    googleSheets.resetCache();
+    notifyListeners();
+  }
+
+  @override
+  void notifyListeners() {
+    super.notifyListeners();
+    if (_suppressNextCloudSync) {
+      _suppressNextCloudSync = false;
+      return;
+    }
+    if (!_loading && googleAuth.isSignedIn) {
+      scheduleCloudSync();
+    }
+  }
+
+  @override
+  void dispose() {
+    _cloudSyncDebounce?.cancel();
+    googleAuth.removeListener(_onGoogleAuthChanged);
+    googleAuth.dispose();
+    super.dispose();
   }
 
   Future<void> _seed() async {

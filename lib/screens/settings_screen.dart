@@ -11,6 +11,7 @@ import '../state/app_state.dart';
 import '../theme/app_theme.dart';
 import '../widgets/app_logo.dart';
 import '../widgets/common.dart';
+import '../widgets/google_sign_in_button.dart';
 import 'manage_taxonomy_screen.dart';
 
 const _uuid = Uuid();
@@ -126,6 +127,9 @@ class SettingsScreen extends StatelessWidget {
           const SizedBox(height: AppSpacing.xl),
           SectionTitle(title: 'Compartir acceso'),
           SectionCard(child: _ShareSection(state: state)),
+          const SizedBox(height: AppSpacing.xl),
+          SectionTitle(title: 'Sincronización con Google Sheets'),
+          SectionCard(child: _GoogleSyncSection(state: state)),
           const SizedBox(height: AppSpacing.xl),
           SectionTitle(title: 'Datos'),
           SectionCard(child: _DataSection(state: state)),
@@ -474,6 +478,255 @@ class _CollaboratorTile extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Sincronización automática con Google Sheets: conecta la cuenta
+/// Google del usuario y guarda/restaura TODOS los datos del app
+/// (transacciones, planificación, objetivos, deudas, categorías,
+/// países, colaboradores y ajustes) en una hoja de cálculo llamada
+/// "Prospera Backup" dentro de su propio Google Drive. Una vez
+/// conectado, cada cambio en el app se sube solo (sin acción manual),
+/// y al reinstalar el app en otro dispositivo, los datos se
+/// recuperan automáticamente desde esa hoja.
+class _GoogleSyncSection extends StatelessWidget {
+  final AppState state;
+  const _GoogleSyncSection({required this.state});
+
+  String _formatDateTime(DateTime dt) {
+    final local = dt.toLocal();
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${two(local.day)}/${two(local.month)}/${local.year} ${two(local.hour)}:${two(local.minute)}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!state.googleConfigured) {
+      return _NotConfiguredNotice();
+    }
+
+    if (state.pendingRemoteBackupFound) {
+      return _PendingRemoteBackupNotice(state: state);
+    }
+
+    if (!state.googleSignedIn) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: const [
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(Icons.cloud_off_rounded, color: AppColors.gasto),
+            title: Text('No conectado'),
+            subtitle: Text(
+              'Conecta tu cuenta Google para guardar y recuperar automáticamente todos tus datos, incluso si reinstalas la app.',
+            ),
+          ),
+          SizedBox(height: AppSpacing.sm),
+          GoogleSignInButton(),
+        ],
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: const Icon(
+            Icons.cloud_done_rounded,
+            color: AppColors.inversion,
+          ),
+          title: const Text('Conectado a Google'),
+          subtitle: Text(state.googleUserEmail ?? ''),
+          trailing: TextButton(
+            onPressed: () => state.disconnectGoogle(),
+            child: const Text('Desconectar'),
+          ),
+        ),
+        const Divider(height: 1),
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: state.cloudSyncInProgress
+              ? const SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(
+                  Icons.sync_rounded,
+                  color: AppColors.brandAmber,
+                ),
+          title: Text(
+            state.cloudSyncInProgress
+                ? 'Sincronizando...'
+                : (state.lastCloudSyncAt != null
+                      ? 'Última sincronización: ${_formatDateTime(state.lastCloudSyncAt!)}'
+                      : 'Aún no se ha sincronizado'),
+          ),
+          subtitle: state.cloudSyncError != null
+              ? Text(
+                  state.cloudSyncError!,
+                  style: const TextStyle(color: AppColors.gasto),
+                )
+              : const Text(
+                  'Todos los cambios se guardan solos en tu hoja "Prospera Backup"',
+                ),
+          trailing: TextButton(
+            onPressed: state.cloudSyncInProgress
+                ? null
+                : () async {
+                    final ok = await state.syncNowWithGoogleSheets(
+                      interactive: true,
+                    );
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            ok
+                                ? 'Datos sincronizados correctamente'
+                                : 'No se pudo sincronizar${state.cloudSyncError != null ? ': ${state.cloudSyncError}' : ''}',
+                          ),
+                        ),
+                      );
+                    }
+                  },
+            child: const Text('Sincronizar ahora'),
+          ),
+        ),
+        const Divider(height: 1),
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: const Icon(
+            Icons.cloud_download_rounded,
+            color: AppColors.deuda,
+          ),
+          title: const Text('Restaurar desde Google Sheets'),
+          subtitle: const Text(
+            'Sobrescribe los datos de este dispositivo con los del respaldo en la nube',
+          ),
+          onTap: () => _confirmRestore(context),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _confirmRestore(BuildContext context) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Restaurar desde Google Sheets'),
+        content: const Text(
+          'Esto reemplazará todos los datos de este dispositivo con los del respaldo guardado en tu Google Sheets. ¿Continuar?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Restaurar'),
+          ),
+        ],
+      ),
+    );
+    if (ok == true) {
+      final success = await state.restoreNowFromGoogleSheets();
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              success
+                  ? 'Datos restaurados correctamente'
+                  : 'No se encontró ningún respaldo o hubo un error${state.cloudSyncError != null ? ': ${state.cloudSyncError}' : ''}',
+            ),
+          ),
+        );
+      }
+    }
+  }
+}
+
+/// Aviso mostrado cuando el desarrollador aún no configuró el
+/// Client ID de Google (ver lib/config/google_config.dart). El resto
+/// del app funciona normalmente en modo 100% local mientras tanto.
+class _NotConfiguredNotice extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return const ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: Icon(Icons.info_outline_rounded, color: AppColors.brandAmber),
+      title: Text('Función no disponible todavía'),
+      subtitle: Text(
+        'La sincronización con Google Sheets requiere una configuración adicional (Client ID de Google) que aún no se ha completado en este proyecto.',
+      ),
+    );
+  }
+}
+
+/// Aviso mostrado justo después de conectar la cuenta Google cuando
+/// ya existe un respaldo remoto: el usuario debe decidir si quiere
+/// restaurarlo (por ejemplo, tras reinstalar la app) o mantener/subir
+/// los datos que tiene actualmente en este dispositivo.
+class _PendingRemoteBackupNotice extends StatelessWidget {
+  final AppState state;
+  const _PendingRemoteBackupNotice({required this.state});
+
+  @override
+  Widget build(BuildContext context) {
+    final updatedAt = state.pendingRemoteBackupUpdatedAt;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: const Icon(
+            Icons.backup_rounded,
+            color: AppColors.brandAmber,
+          ),
+          title: const Text('Se encontró un respaldo en Google Sheets'),
+          subtitle: Text(
+            updatedAt != null
+                ? 'Última actualización: ${updatedAt.day}/${updatedAt.month}/${updatedAt.year}. ¿Qué deseas hacer?'
+                : '¿Deseas restaurar esos datos o mantener los de este dispositivo?',
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.only(top: AppSpacing.sm),
+          child: Row(
+            children: [
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () =>
+                      state.dismissPendingRemoteBackupAndKeepLocal(),
+                  child: const Text('Mantener este dispositivo'),
+                ),
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              Expanded(
+                child: ElevatedButton(
+                  onPressed: () async {
+                    final ok = await state.acceptPendingRemoteBackup();
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            ok
+                                ? 'Datos restaurados correctamente'
+                                : 'No se pudo restaurar el respaldo',
+                          ),
+                        ),
+                      );
+                    }
+                  },
+                  child: const Text('Restaurar respaldo'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }

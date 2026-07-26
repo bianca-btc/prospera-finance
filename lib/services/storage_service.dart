@@ -135,6 +135,9 @@ class StorageService {
   }
 
   // ---- Export/Import completo ----
+  // Inclui absolutamente todos os dados do app — usado tanto para o
+  // backup/restauração manual (JSON via clipboard) quanto para a
+  // sincronização automática com Google Sheets.
   Map<String, dynamic> exportAll() {
     return {
       'txns': loadTxns(),
@@ -146,6 +149,11 @@ class StorageService {
       'countries': loadCountries(),
       'collaborators': loadCollaborators(),
       'visibleCards': loadVisibleCards(),
+      'pin': loadPin(),
+      'themeMode': loadThemeMode(),
+      'shareToken': loadShareToken(),
+      'ownerName': loadOwnerName(),
+      'periodRange': loadPeriodRange(),
     };
   }
 
@@ -186,6 +194,21 @@ class StorageService {
       await saveVisibleCards(
         (data['visibleCards'] as List).map((e) => e.toString()).toList(),
       );
+    }
+    if (data['pin'] != null) {
+      await savePin(data['pin'] as String);
+    }
+    if (data['themeMode'] != null) {
+      await saveThemeMode(data['themeMode'] as String);
+    }
+    if (data['shareToken'] != null) {
+      await saveShareToken(data['shareToken'] as String);
+    }
+    if (data['ownerName'] != null) {
+      await saveOwnerName(data['ownerName'] as String);
+    }
+    if (data['periodRange'] != null) {
+      await savePeriodRange(data['periodRange'] as Map<String, dynamic>);
     }
   }
 
