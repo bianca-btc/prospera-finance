@@ -90,13 +90,16 @@ class _PlanificacionScreenState extends State<PlanificacionScreen> {
             const SectionCard(
               child: Text('No hay presupuesto definido para este período.'),
             )
-          else
+          else ...[
+            const _PlanTableHeader(),
+            const SizedBox(height: 6),
             ...budgets.map(
               (b) => Padding(
                 padding: const EdgeInsets.only(bottom: AppSpacing.sm),
                 child: _BudgetTile(item: b, realizado: realizadoFor(b)),
               ),
             ),
+          ],
           const SizedBox(height: AppSpacing.xxl),
           Text(
             'Deudas',
@@ -107,13 +110,16 @@ class _PlanificacionScreenState extends State<PlanificacionScreen> {
           const SizedBox(height: AppSpacing.sm),
           if (debts.isEmpty)
             const SectionCard(child: Text('No hay deudas registradas.'))
-          else
+          else ...[
+            const _PlanTableHeader(realizadoLabel: 'Pagado'),
+            const SizedBox(height: 6),
             ...debts.map(
               (d) => Padding(
                 padding: const EdgeInsets.only(bottom: AppSpacing.sm),
                 child: _DebtTile(debt: d),
               ),
             ),
+          ],
           const SizedBox(height: AppSpacing.xxl),
           Text(
             'Objetivos de inversión',
@@ -126,13 +132,19 @@ class _PlanificacionScreenState extends State<PlanificacionScreen> {
             const SectionCard(
               child: Text('No hay objetivos de inversión creados.'),
             )
-          else
+          else ...[
+            const _PlanTableHeader(
+              plannedLabel: 'Meta',
+              realizadoLabel: 'Acumulado',
+            ),
+            const SizedBox(height: 6),
             ...state.goals.map(
               (g) => Padding(
                 padding: const EdgeInsets.only(bottom: AppSpacing.sm),
                 child: _GoalTile(goal: g),
               ),
             ),
+          ],
         ],
       ),
     );
@@ -564,6 +576,96 @@ class _PlanificacionScreenState extends State<PlanificacionScreen> {
   }
 }
 
+/// Encabezado de columnas para las listas estilo tabla de Planificación:
+/// alinea visualmente "Planificado"/"Realizado" a la derecha de cada
+/// tarjeta, igual que el mockup de referencia, pero manteniendo las
+/// tarjetas (no una tabla HTML rígida) para que sigan siendo táctiles y
+/// expandibles en móvil.
+class _PlanTableHeader extends StatelessWidget {
+  final String plannedLabel;
+  final String realizadoLabel;
+  const _PlanTableHeader({
+    this.plannedLabel = 'Planificado',
+    this.realizadoLabel = 'Realizado',
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final style = TextStyle(
+      fontSize: 10.5,
+      fontWeight: FontWeight.w700,
+      letterSpacing: 0.2,
+      color: Theme.of(context).textTheme.bodySmall?.color,
+    );
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
+      child: Row(
+        children: [
+          Expanded(child: Text('CATEGORÍA', style: style)),
+          SizedBox(
+            width: 72,
+            child: Text(
+              plannedLabel.toUpperCase(),
+              textAlign: TextAlign.right,
+              style: style,
+            ),
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          SizedBox(
+            width: 72,
+            child: Text(
+              realizadoLabel.toUpperCase(),
+              textAlign: TextAlign.right,
+              style: style,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Fila de estado ("Estado") con ícono + etiqueta, usada en las 3 tarjetas
+/// (Gasto normal, Deuda, Inversión) para mostrar de un vistazo si un plan
+/// está cubierto/al día, excedido, o pendiente — parte del rediseño estilo
+/// tabla (columna "Estado" del mockup de referencia).
+class _StatusChip extends StatelessWidget {
+  final String label;
+  final Color color;
+  final IconData icon;
+  const _StatusChip({
+    required this.label,
+    required this.color,
+    required this.icon,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.14),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 11, color: color),
+          const SizedBox(width: 3),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 10.5,
+              fontWeight: FontWeight.w700,
+              color: color,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _BudgetTile extends StatefulWidget {
   final BudgetItem item;
   final double realizado;
@@ -583,12 +685,14 @@ class _BudgetTileState extends State<_BudgetTile> {
     final diff = b.planned - realizado;
     final progress = b.planned <= 0 ? 0.0 : realizado / b.planned;
     final overflow = realizado > b.planned;
+    final covered = b.planned > 0 && realizado >= b.planned - 0.01;
     // Color de la barra según el tipo de línea: azul para aportes de
     // inversión/objetivo, rojo para gasto/deuda — igual criterio pedido
     // para las transacciones.
     final barColor = b.isGoalContribution
         ? AppColors.inversion
         : AppColors.gasto;
+    final mutedColor = Theme.of(context).textTheme.bodySmall?.color;
 
     return SectionCard(
       padding: const EdgeInsets.symmetric(
@@ -600,111 +704,115 @@ class _BudgetTileState extends State<_BudgetTile> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // ------- Fila estilo tabla: Categoría | Planificado | Realizado -------
             Row(
               children: [
                 CategoryIcon(
                   iconKey: _iconKey(context, b.category),
                   color: barColor,
-                  size: 36,
+                  size: 32,
                 ),
-                const SizedBox(width: AppSpacing.md),
+                const SizedBox(width: AppSpacing.sm),
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+                  child: Row(
                     children: [
-                      Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              '${b.category} · ${b.subcategory}',
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w600,
-                                fontSize: 13.5,
-                              ),
-                              overflow: TextOverflow.ellipsis,
-                            ),
+                      Expanded(
+                        child: Text(
+                          '${b.category} · ${b.subcategory}',
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w600,
+                            fontSize: 13,
                           ),
-                          if (b.autoSuggested)
-                            const Padding(
-                              padding: EdgeInsets.only(left: 4),
-                              child: Icon(
-                                Icons.auto_awesome_rounded,
-                                size: 14,
-                                color: AppColors.inversion,
-                              ),
-                            ),
-                        ],
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
-                      const SizedBox(height: 3),
-                      // Realizado destacado (bold, coloreado) vs. Planificado
-                      // en segundo plano — más fácil de leer de un vistazo
-                      // que la versión anterior (texto plano concatenado).
-                      Row(
-                        children: [
-                          Text(
-                            formatUsd(realizado, decimals: false),
-                            style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w800,
-                              color: overflow ? AppColors.gasto : barColor,
-                            ),
+                      if (b.autoSuggested)
+                        const Padding(
+                          padding: EdgeInsets.only(left: 4),
+                          child: Icon(
+                            Icons.auto_awesome_rounded,
+                            size: 13,
+                            color: AppColors.inversion,
                           ),
-                          Text(
-                            ' de ${formatUsd(b.planned, decimals: false)}',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Theme.of(
-                                context,
-                              ).textTheme.bodySmall?.color,
-                            ),
-                          ),
-                        ],
-                      ),
+                        ),
                     ],
                   ),
                 ),
+                SizedBox(
+                  width: 72,
+                  child: Text(
+                    formatUsd(b.planned, decimals: false),
+                    textAlign: TextAlign.right,
+                    style: TextStyle(fontSize: 12.5, color: mutedColor),
+                  ),
+                ),
                 const SizedBox(width: AppSpacing.sm),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    PriorityBadge(priority: b.priority),
-                    const SizedBox(height: 4),
-                    Icon(
-                      _expanded
-                          ? Icons.expand_less_rounded
-                          : Icons.expand_more_rounded,
-                      size: 18,
+                SizedBox(
+                  width: 72,
+                  child: Text(
+                    formatUsd(realizado, decimals: false),
+                    textAlign: TextAlign.right,
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                      color: overflow ? AppColors.gasto : barColor,
                     ),
-                  ],
+                  ),
                 ),
               ],
             ),
             const SizedBox(height: AppSpacing.sm),
-            ProgressBarWithOverflow(value: progress, color: barColor, height: 10),
-            const SizedBox(height: 4),
+            ProgressBarWithOverflow(value: progress, color: barColor, height: 8),
+            const SizedBox(height: 6),
+            // ------- Meta-fila: Diferencia / Vencimiento / Prioridad / Estado -------
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(
-                  overflow
-                      ? '¡Excedido! +${formatUsd(-diff, decimals: false)}'
-                      : '${(progress * 100).clamp(0, 999).toStringAsFixed(0)}% · faltan ${formatUsd(diff, decimals: false)}',
-                  style: TextStyle(
-                    fontSize: 10.5,
-                    fontWeight: overflow ? FontWeight.w700 : FontWeight.w500,
-                    color: overflow
-                        ? AppColors.gasto
-                        : Theme.of(context).textTheme.bodySmall?.color,
-                  ),
-                ),
-                if (b.dueDate != null)
-                  Text(
-                    'Vence ${formatFullDate(b.dueDate!)}',
+                Expanded(
+                  child: Text(
+                    overflow
+                        ? 'Excedido +${formatUsd(-diff, decimals: false)}'
+                        : 'Faltan ${formatUsd(diff, decimals: false)}',
                     style: TextStyle(
                       fontSize: 10.5,
-                      color: Theme.of(context).textTheme.bodySmall?.color,
+                      fontWeight: overflow ? FontWeight.w700 : FontWeight.w500,
+                      color: overflow ? AppColors.gasto : mutedColor,
                     ),
                   ),
+                ),
+                if (b.dueDate != null) ...[
+                  Text(
+                    formatFullDate(b.dueDate!),
+                    style: TextStyle(fontSize: 10.5, color: mutedColor),
+                  ),
+                  const SizedBox(width: AppSpacing.sm),
+                ],
+                PriorityBadge(priority: b.priority),
+                const SizedBox(width: AppSpacing.sm),
+                overflow
+                    ? const _StatusChip(
+                        label: 'Excedido',
+                        color: AppColors.gasto,
+                        icon: Icons.priority_high_rounded,
+                      )
+                    : covered
+                        ? _StatusChip(
+                            label: 'Cubierto',
+                            color: barColor,
+                            icon: Icons.check_rounded,
+                          )
+                        : const _StatusChip(
+                            label: 'En curso',
+                            color: AppColors.warning,
+                            icon: Icons.hourglass_bottom_rounded,
+                          ),
+                const SizedBox(width: 2),
+                Icon(
+                  _expanded
+                      ? Icons.expand_less_rounded
+                      : Icons.expand_more_rounded,
+                  size: 16,
+                  color: mutedColor,
+                ),
               ],
             ),
             if (_expanded) ...[
@@ -845,7 +953,12 @@ class _DebtTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final progress = debt.progress;
+    final mutedColor = Theme.of(context).textTheme.bodySmall?.color;
     return SectionCard(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.md,
+        vertical: AppSpacing.md,
+      ),
       child: InkWell(
         onTap: () => Navigator.of(context).push(
           MaterialPageRoute(builder: (_) => DebtFormScreen(existing: debt)),
@@ -853,71 +966,95 @@ class _DebtTile extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // ------- Fila estilo tabla: Nombre | Total | Pagado -------
             Row(
               children: [
                 const CategoryIcon(
                   iconKey: 'account_balance',
                   color: AppColors.inversion,
-                  size: 36,
+                  size: 32,
                 ),
-                const SizedBox(width: AppSpacing.md),
+                const SizedBox(width: AppSpacing.sm),
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        debt.name,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w600,
-                          fontSize: 14,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        '${formatUsd(debt.monthlyInstallment, decimals: false)}/mes · ${debt.paidInstallments}/${debt.months} cuotas',
-                        style: TextStyle(
-                          fontSize: 11.5,
-                          color: Theme.of(context).textTheme.bodySmall?.color,
-                        ),
-                      ),
-                    ],
+                  child: Text(
+                    debt.name,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13,
+                    ),
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
-                if (debt.isSettled)
-                  const Icon(
-                    Icons.check_circle_rounded,
-                    color: AppColors.ingreso,
-                    size: 20,
-                  )
-                else
-                  OutlinedButton(
-                    onPressed: () => _showPayDialog(context),
-                    style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 4,
-                      ),
-                    ),
-                    child: const Text(
-                      'Realizar pago',
-                      style: TextStyle(fontSize: 11.5),
+                SizedBox(
+                  width: 72,
+                  child: Text(
+                    formatUsd(debt.totalAmount, decimals: false),
+                    textAlign: TextAlign.right,
+                    style: TextStyle(fontSize: 12.5, color: mutedColor),
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                SizedBox(
+                  width: 72,
+                  child: Text(
+                    formatUsd(debt.paidAmount, decimals: false),
+                    textAlign: TextAlign.right,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.inversion,
                     ),
                   ),
+                ),
               ],
             ),
             const SizedBox(height: AppSpacing.sm),
             ProgressBarWithOverflow(
               value: progress,
               color: AppColors.inversion,
+              height: 8,
             ),
             const SizedBox(height: 6),
-            Text(
-              'Restante ${formatUsd(debt.remainingAmount, decimals: false)} de ${formatUsd(debt.totalAmount, decimals: false)}',
-              style: TextStyle(
-                fontSize: 11,
-                color: Theme.of(context).textTheme.bodySmall?.color,
-              ),
+            // ------- Meta-fila: Restante / Cuotas / Estado / Acción -------
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Restante ${formatUsd(debt.remainingAmount, decimals: false)} · ${formatUsd(debt.monthlyInstallment, decimals: false)}/mes',
+                    style: TextStyle(fontSize: 10.5, color: mutedColor),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                debt.isSettled
+                    ? const _StatusChip(
+                        label: 'Liquidada',
+                        color: AppColors.ingreso,
+                        icon: Icons.check_rounded,
+                      )
+                    : _StatusChip(
+                        label: '${debt.paidInstallments}/${debt.months}',
+                        color: AppColors.inversion,
+                        icon: Icons.hourglass_bottom_rounded,
+                      ),
+              ],
             ),
+            if (!debt.isSettled) ...[
+              const SizedBox(height: AppSpacing.sm),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton(
+                  onPressed: () => _showPayDialog(context),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                  ),
+                  child: const Text(
+                    'Realizar pago',
+                    style: TextStyle(fontSize: 11.5),
+                  ),
+                ),
+              ),
+            ],
           ],
         ),
       ),
@@ -1010,7 +1147,12 @@ class _GoalTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final completed = goal.isCompleted;
+    final mutedColor = Theme.of(context).textTheme.bodySmall?.color;
     return SectionCard(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.md,
+        vertical: AppSpacing.md,
+      ),
       child: InkWell(
         onTap: () => Navigator.of(context).push(
           MaterialPageRoute(builder: (_) => GoalFormScreen(existing: goal)),
@@ -1018,116 +1160,129 @@ class _GoalTile extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // ------- Fila estilo tabla: Nombre | Meta | Acumulado -------
             Row(
               children: [
                 const CategoryIcon(
                   iconKey: 'trending_up',
                   color: AppColors.inversion,
-                  size: 36,
+                  size: 32,
                 ),
-                const SizedBox(width: AppSpacing.md),
+                const SizedBox(width: AppSpacing.sm),
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        goal.name,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.w600,
-                          fontSize: 14,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        'Acumulado ${formatUsd(goal.currentAmount, decimals: false)} de ${formatUsd(goal.targetAmount, decimals: false)}',
-                        style: TextStyle(
-                          fontSize: 11.5,
-                          color: Theme.of(context).textTheme.bodySmall?.color,
-                        ),
-                      ),
-                    ],
+                  child: Text(
+                    goal.name,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13,
+                    ),
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
-                if (completed)
-                  const Icon(
-                    Icons.check_circle_rounded,
-                    color: AppColors.ingreso,
-                    size: 20,
-                  )
-                else
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      OutlinedButton(
-                        onPressed: () => _showContributeDialog(context),
-                        style: OutlinedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 4,
-                          ),
-                          minimumSize: const Size(0, 30),
-                        ),
-                        child: const Text(
-                          'Aportar',
-                          style: TextStyle(fontSize: 11.5),
-                        ),
-                      ),
-                      if (goal.currentAmount > 0) ...[
-                        const SizedBox(height: 4),
-                        OutlinedButton(
-                          onPressed: () => _showWithdrawDialog(context),
-                          style: OutlinedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 10,
-                              vertical: 4,
-                            ),
-                            minimumSize: const Size(0, 30),
-                            side: const BorderSide(color: AppColors.gasto),
-                          ),
-                          child: const Text(
-                            'Rescatar',
-                            style: TextStyle(
-                              fontSize: 11.5,
-                              color: AppColors.gasto,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ],
+                SizedBox(
+                  width: 72,
+                  child: Text(
+                    formatUsd(goal.targetAmount, decimals: false),
+                    textAlign: TextAlign.right,
+                    style: TextStyle(fontSize: 12.5, color: mutedColor),
                   ),
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                SizedBox(
+                  width: 72,
+                  child: Text(
+                    formatUsd(goal.currentAmount, decimals: false),
+                    textAlign: TextAlign.right,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.inversion,
+                    ),
+                  ),
+                ),
               ],
             ),
             const SizedBox(height: AppSpacing.sm),
             ProgressBarWithOverflow(
               value: goal.progress,
               color: AppColors.inversion,
+              height: 8,
             ),
             const SizedBox(height: 6),
+            // ------- Meta-fila: Restante/Meta superada | Fecha final | Estado -------
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(
-                  completed
-                      ? (goal.isExceeded ? 'Meta superada' : 'Meta concluida')
-                      : 'Restante ${formatUsd(goal.remaining, decimals: false)}',
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: completed ? FontWeight.w700 : FontWeight.w400,
-                    color: completed
-                        ? AppColors.ingreso
-                        : Theme.of(context).textTheme.bodySmall?.color,
+                Expanded(
+                  child: Text(
+                    completed
+                        ? (goal.isExceeded ? 'Meta superada' : 'Meta alcanzada')
+                        : 'Restante ${formatUsd(goal.remaining, decimals: false)}',
+                    style: TextStyle(
+                      fontSize: 10.5,
+                      fontWeight: completed ? FontWeight.w700 : FontWeight.w500,
+                      color: completed ? AppColors.ingreso : mutedColor,
+                    ),
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
-                if (goal.targetDate != null)
+                if (goal.targetDate != null) ...[
                   Text(
-                    'Meta: ${formatFullDate(goal.targetDate!)}',
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: Theme.of(context).textTheme.bodySmall?.color,
-                    ),
+                    formatFullDate(goal.targetDate!),
+                    style: TextStyle(fontSize: 10.5, color: mutedColor),
                   ),
+                  const SizedBox(width: AppSpacing.sm),
+                ],
+                completed
+                    ? const _StatusChip(
+                        label: 'Completa',
+                        color: AppColors.ingreso,
+                        icon: Icons.check_rounded,
+                      )
+                    : const _StatusChip(
+                        label: 'En curso',
+                        color: AppColors.inversion,
+                        icon: Icons.hourglass_bottom_rounded,
+                      ),
               ],
             ),
+            if (!completed) ...[
+              const SizedBox(height: AppSpacing.sm),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => _showContributeDialog(context),
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 6),
+                      ),
+                      child: const Text(
+                        'Aportar',
+                        style: TextStyle(fontSize: 11.5),
+                      ),
+                    ),
+                  ),
+                  if (goal.currentAmount > 0) ...[
+                    const SizedBox(width: AppSpacing.sm),
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => _showWithdrawDialog(context),
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 6),
+                          side: const BorderSide(color: AppColors.gasto),
+                        ),
+                        child: const Text(
+                          'Rescatar',
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            color: AppColors.gasto,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ],
           ],
         ),
       ),
