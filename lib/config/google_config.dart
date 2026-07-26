@@ -33,4 +33,5 @@
 /// la vista previa Web como para el APK de Android (se usa como
 /// `serverClientId` en Android, tal como indica la documentación
 /// oficial de google_sign_in).
-const String googleOAuthClientId = '';
+const String googleOAuthClientId =
+    '1032056798967-1qu9730jirk7rhurehvlsu4hpd8g3oin.apps.googleusercontent.com';
