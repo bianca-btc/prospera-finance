@@ -834,7 +834,10 @@ class _DebtTile extends StatelessWidget {
               ],
             ),
             const SizedBox(height: AppSpacing.sm),
-            ProgressBarWithOverflow(value: progress, color: AppColors.deuda),
+            ProgressBarWithOverflow(
+              value: progress,
+              color: AppColors.inversion,
+            ),
             const SizedBox(height: 6),
             Text(
               'Restante ${formatUsd(debt.remainingAmount, decimals: false)} de ${formatUsd(debt.totalAmount, decimals: false)}',

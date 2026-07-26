@@ -22,6 +22,14 @@ class Txn {
   String?
   budgetItemId; // vincula explicitamente a um ítem da Planificación (BudgetItem)
 
+  /// Distingue, dentro de un movimiento de tipo [TxType.inversion], si es
+  /// un RETIRO (rescate) en lugar de un aporte. Un rescate:
+  /// - Disminuye el saldo de la inversión ([goalId]).
+  /// - Aumenta el saldo disponible del usuario (efecto contrario al aporte).
+  /// Nunca se usa para [TxType.gasto]/[TxType.ingreso]/[TxType.deuda]
+  /// (siempre false para esos tipos).
+  bool isWithdrawal;
+
   Txn({
     required this.id,
     required this.type,
@@ -39,12 +47,36 @@ class Txn {
     this.debtId,
     this.goalId,
     this.budgetItemId,
+    this.isWithdrawal = false,
   });
 
   int get month => date.month;
   int get year => date.year;
 
-  double get signedAmount => type.isInflow ? amount : -amount;
+  /// Un movimiento "cuenta" como entrada de dinero disponible cuando es un
+  /// Ingreso o un Rescate de inversión (aunque su [type] técnico sea
+  /// [TxType.inversion]). Úsese esto — y no [TxType.isInflow] directamente —
+  /// para decidir signo/color en la UI y en los cálculos de saldo.
+  bool get isEffectivelyInflow =>
+      type == TxType.ingreso || (type == TxType.inversion && isWithdrawal);
+
+  double get signedAmount => isEffectivelyInflow ? amount : -amount;
+
+  /// Etiqueta de "Tipo de movimiento" pensada para el historial —
+  /// distingue Aporte/Rescate de inversión y Pago de deuda, aunque el
+  /// modelo interno siga usando solamente 4 [TxType].
+  String get movementTypeLabel {
+    switch (type) {
+      case TxType.ingreso:
+        return 'Ingreso';
+      case TxType.gasto:
+        return 'Gasto';
+      case TxType.inversion:
+        return isWithdrawal ? 'Rescate de inversión' : 'Aporte de inversión';
+      case TxType.deuda:
+        return 'Pago de deuda';
+    }
+  }
 
   Map<String, dynamic> toJson() => {
     'id': id,
@@ -63,6 +95,7 @@ class Txn {
     'debtId': debtId,
     'goalId': goalId,
     'budgetItemId': budgetItemId,
+    'isWithdrawal': isWithdrawal,
   };
 
   factory Txn.fromJson(Map<String, dynamic> json) => Txn(
@@ -82,6 +115,7 @@ class Txn {
     debtId: json['debtId'] as String?,
     goalId: json['goalId'] as String?,
     budgetItemId: json['budgetItemId'] as String?,
+    isWithdrawal: json['isWithdrawal'] as bool? ?? false,
   );
 
   Txn copyWith({
@@ -100,6 +134,7 @@ class Txn {
     String? debtId,
     String? goalId,
     String? budgetItemId,
+    bool? isWithdrawal,
   }) {
     return Txn(
       id: id,
@@ -118,6 +153,7 @@ class Txn {
       debtId: debtId ?? this.debtId,
       goalId: goalId ?? this.goalId,
       budgetItemId: budgetItemId ?? this.budgetItemId,
+      isWithdrawal: isWithdrawal ?? this.isWithdrawal,
     );
   }
 }

@@ -696,13 +696,17 @@ class AppState extends ChangeNotifier {
   }
 
   /// Recalcula [InvestmentGoal.currentAmount] como soma de todas as
-  /// transações vinculadas (Txn.goalId == goalId). Retorna true se mudou.
+  /// transações vinculadas (Txn.goalId == goalId). Os RESCATES
+  /// ([Txn.isWithdrawal] == true) restam do total en vez de sumar —
+  /// mantém [InvestmentGoal.currentAmount] como fonte única de verdade,
+  /// refletindo aportes e retiros. Retorna true se mudou.
   bool _recalcGoal(String goalId) {
     final idx = _goals.indexWhere((g) => g.id == goalId);
     if (idx == -1) return false;
-    final total = _txns
-        .where((t) => t.goalId == goalId)
-        .fold(0.0, (s, t) => s + t.amount);
+    final total = _txns.where((t) => t.goalId == goalId).fold(
+      0.0,
+      (s, t) => t.isWithdrawal ? s - t.amount : s + t.amount,
+    );
     if ((total - _goals[idx].currentAmount).abs() < 0.005) return false;
     _goals[idx] = _goals[idx].copyWith(currentAmount: total);
     return true;
@@ -1004,10 +1008,12 @@ class AppState extends ChangeNotifier {
     }
   }
 
-  /// Registra o aporte do mês para um objetivo com um único clique: cria
-  /// automaticamente uma transação de inversión vinculada (goalId), que por
-  /// sua vez atualiza o acumulado do objetivo, o dashboard, os KPIs e as
-  /// análises — sem nenhuma atualização manual adicional.
+  /// Registra el aporte a un objetivo con un solo clic ("Aportar dinero"):
+  /// crea automáticamente un movimiento de inversión vinculado (goalId),
+  /// que aumenta el saldo actual de la inversión y actualiza el progreso
+  /// de la meta, el dashboard, los KPIs y los análisis — sin ninguna
+  /// actualización manual adicional. Esta es la ÚNICA vía soportada para
+  /// aportar dinero a una inversión (no se crea desde Nueva Transacción).
   Future<void> contributeToGoal(String goalId, double amount) async {
     final idx = _goals.indexWhere((g) => g.id == goalId);
     if (idx == -1 || amount <= 0) return;
@@ -1025,8 +1031,45 @@ class AppState extends ChangeNotifier {
         subcategory: goal.subcategory.isNotEmpty ? goal.subcategory : goal.name,
         amount: amount,
         date: DateTime.now(),
-        description: 'Aporte a "${goal.name}"',
+        description: 'Aporte ${goal.name}',
         goalId: goal.id,
+        isWithdrawal: false,
+      ),
+    );
+  }
+
+  /// Registra un rescate (retiro) de un objetivo de inversión con un solo
+  /// clic ("Rescatar dinero"): crea automáticamente un movimiento de
+  /// inversión marcado como retiro ([Txn.isWithdrawal] = true), lo que:
+  /// - Disminuye [InvestmentGoal.currentAmount] (vía [_recalcGoal]).
+  /// - Aumenta el saldo disponible del usuario (vía [balance]/
+  ///   [balanceForMonth], que tratan los retiros como entrada de dinero).
+  /// Mantiene siempre el historial completo (el movimiento queda visible
+  /// en Movimientos). No permite rescatar más de lo que hay acumulado.
+  Future<void> withdrawFromGoal(String goalId, double amount) async {
+    final idx = _goals.indexWhere((g) => g.id == goalId);
+    if (idx == -1 || amount <= 0) return;
+    final goal = _goals[idx];
+    final safeAmount = amount > goal.currentAmount
+        ? goal.currentAmount
+        : amount;
+    if (safeAmount <= 0) return;
+    final country = goal.country.isNotEmpty
+        ? goal.country
+        : (_countries.isNotEmpty ? _countries.first : 'El Salvador');
+    await addTxn(
+      Txn(
+        id: _uuid.v4(),
+        type: TxType.inversion,
+        status: TxStatus.pagado,
+        country: country,
+        category: goal.category,
+        subcategory: goal.subcategory.isNotEmpty ? goal.subcategory : goal.name,
+        amount: safeAmount,
+        date: DateTime.now(),
+        description: 'Rescate ${goal.name}',
+        goalId: goal.id,
+        isWithdrawal: true,
       ),
     );
   }
@@ -1114,7 +1157,38 @@ class AppState extends ChangeNotifier {
         subcategory: debt.subcategory,
         amount: debt.monthlyInstallment,
         date: DateTime.now(),
-        description: 'Cuota de "${debt.name}"',
+        description: 'Pago ${debt.name}',
+        debtId: debt.id,
+      ),
+    );
+  }
+
+  /// Registra un pago manual de monto libre para una deuda ("Realizar
+  /// pago" dentro de la planificación de deuda): crea automáticamente un
+  /// movimiento de tipo deuda vinculado (debtId), que reduce el saldo
+  /// pendiente y actualiza el progreso de pago. Esta es la vía preferida
+  /// cuando el usuario quiere pagar un monto distinto al de la cuota fija
+  /// (adelantos, pagos parciales, etc). No permite pagar más de lo que
+  /// queda pendiente.
+  Future<void> payDebt(String debtId, double amount) async {
+    final idx = _debts.indexWhere((d) => d.id == debtId);
+    if (idx == -1 || amount <= 0) return;
+    final debt = _debts[idx];
+    final safeAmount = amount > debt.remainingAmount
+        ? debt.remainingAmount
+        : amount;
+    if (safeAmount <= 0) return;
+    await addTxn(
+      Txn(
+        id: _uuid.v4(),
+        type: TxType.deuda,
+        status: TxStatus.pagado,
+        country: debt.country,
+        category: debt.category,
+        subcategory: debt.subcategory,
+        amount: safeAmount,
+        date: DateTime.now(),
+        description: 'Pago ${debt.name}',
         debtId: debt.id,
       ),
     );
@@ -1219,10 +1293,32 @@ class AppState extends ChangeNotifier {
         .fold(0.0, (sum, t) => sum + t.amount);
   }
 
+  /// Suma de APORTES de inversión (excluye rescates) en el período.
+  double totalAportesInversion({Set<YearMonth>? periods}) {
+    final list = txnsForPeriods(periods ?? selectedPeriods);
+    return list
+        .where((t) => t.type == TxType.inversion && !t.isWithdrawal)
+        .fold(0.0, (sum, t) => sum + t.amount);
+  }
+
+  /// Suma de RESCATES de inversión en el período.
+  double totalRescatesInversion({Set<YearMonth>? periods}) {
+    final list = txnsForPeriods(periods ?? selectedPeriods);
+    return list
+        .where((t) => t.type == TxType.inversion && t.isWithdrawal)
+        .fold(0.0, (sum, t) => sum + t.amount);
+  }
+
   double get totalIngresos => totalByType(TxType.ingreso);
   double get totalGastosYDeudas =>
       totalByType(TxType.gasto) + totalByType(TxType.deuda);
-  double get totalInversiones => totalByType(TxType.inversion);
+
+  /// Inversión NETA del período (aportes - rescates). Un rescate reduce
+  /// este valor, lo que a su vez aumenta [balance] — refleja que el
+  /// dinero rescatado vuelve al saldo disponible del usuario.
+  double get totalInversiones =>
+      totalAportesInversion() - totalRescatesInversion();
+
   double get balance => totalIngresos - totalGastosYDeudas - totalInversiones;
 
   double plannedTotalFor(Set<YearMonth> periods) {
@@ -1294,6 +1390,8 @@ class AppState extends ChangeNotifier {
       totalInversiones > investmentGoalPlannedSelected + 0.01;
 
   /// Balanço de um mês específico (usado para cálculo de rollover de déficit).
+  /// Rescates de inversión (isWithdrawal=true) suman al saldo disponible
+  /// en vez de restar, ya que representan dinero que vuelve al usuario.
   double balanceForMonth(YearMonth ym) {
     final list = txnsForPeriods({ym});
     final ing = list
@@ -1302,10 +1400,13 @@ class AppState extends ChangeNotifier {
     final out = list
         .where((t) => t.type == TxType.gasto || t.type == TxType.deuda)
         .fold(0.0, (s, t) => s + t.amount);
-    final inv = list
-        .where((t) => t.type == TxType.inversion)
+    final aportes = list
+        .where((t) => t.type == TxType.inversion && !t.isWithdrawal)
         .fold(0.0, (s, t) => s + t.amount);
-    return ing - out - inv;
+    final rescates = list
+        .where((t) => t.type == TxType.inversion && t.isWithdrawal)
+        .fold(0.0, (s, t) => s + t.amount);
+    return ing + rescates - out - aportes;
   }
 
   /// Verifica se o mês anterior teve déficit e, caso ainda não tenha sido

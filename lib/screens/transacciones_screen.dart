@@ -126,14 +126,18 @@ class _TxnTile extends StatelessWidget {
   final Txn txn;
   const _TxnTile({required this.txn});
 
-  Color _colorFor(TxType t) {
-    switch (t) {
+  /// Color semántico del movimiento: verde para dinero que entra
+  /// (ingreso o rescate de inversión), rojo para gasto, azul para
+  /// aporte de inversión o pago de deuda.
+  Color _colorFor(Txn t) {
+    if (t.isEffectivelyInflow) return AppColors.ingreso;
+    switch (t.type) {
       case TxType.ingreso:
         return AppColors.ingreso;
       case TxType.gasto:
         return AppColors.gasto;
       case TxType.deuda:
-        return AppColors.deuda;
+        return AppColors.inversion;
       case TxType.inversion:
         return AppColors.inversion;
     }
@@ -142,7 +146,7 @@ class _TxnTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final state = context.read<AppState>();
-    final color = _colorFor(txn.type);
+    final color = _colorFor(txn);
     final cats = state.categoriesFor(txn.type);
     final catMatch = cats.where((c) => c.name == txn.category);
     final iconKey = catMatch.isNotEmpty ? catMatch.first.icon : 'category';
@@ -235,7 +239,7 @@ class _TxnTile extends StatelessWidget {
                             ),
                             const SizedBox(height: 2),
                             Text(
-                              '${txn.category} · ${txn.subcategory} · ${formatDayMonth(txn.date)} · ${txn.country}',
+                              '${txn.movementTypeLabel} · ${formatDayMonth(txn.date)} · ${txn.country}',
                               style: TextStyle(
                                 fontSize: 11.5,
                                 color: Theme.of(
@@ -250,7 +254,7 @@ class _TxnTile extends StatelessWidget {
                       ),
                       const SizedBox(width: AppSpacing.sm),
                       Text(
-                        '${txn.type.isInflow ? '+' : '-'}${formatUsd(txn.amount)}',
+                        '${txn.isEffectivelyInflow ? '+' : '-'}${formatUsd(txn.amount)}',
                         style: TextStyle(
                           color: color,
                           fontWeight: FontWeight.w800,
