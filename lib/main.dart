@@ -1,13 +1,23 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' as sb;
 
 import 'services/storage_service.dart';
+import 'services/auth_service.dart';
+import 'services/cloud_sync_service.dart';
+import 'services/supabase_config.dart';
 import 'state/app_state.dart';
 import 'theme/app_theme.dart';
 import 'screens/home_screen.dart';
 import 'screens/lock_screen.dart';
+import 'screens/login_screen.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await sb.Supabase.initialize(
+    url: SupabaseConfig.url,
+    publishableKey: SupabaseConfig.anonKey,
+  );
   runApp(const ProsperaApp());
 }
 
@@ -16,10 +26,20 @@ class ProsperaApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ChangeNotifierProvider<AppState>(
-      create: (_) => AppState(StorageService())..init(),
-      child: Consumer<AppState>(
-        builder: (context, state, _) {
+    return MultiProvider(
+      providers: [
+        ChangeNotifierProvider<AppState>(
+          create: (_) => AppState(StorageService())..init(),
+        ),
+        ChangeNotifierProvider<AuthService>(create: (_) => AuthService()..init()),
+        ProxyProvider2<AuthService, AppState, CloudSyncService>(
+          update: (_, auth, appState, previous) =>
+              previous ?? CloudSyncService(auth: auth, appState: appState),
+          dispose: (_, service) => service.dispose(),
+        ),
+      ],
+      child: Consumer2<AppState, AuthService>(
+        builder: (context, state, auth, _) {
           return MaterialApp(
             title: 'Prospera',
             debugShowCheckedModeBanner: false,
@@ -28,7 +48,9 @@ class ProsperaApp extends StatelessWidget {
             themeMode: state.themeMode,
             home: state.loading
                 ? const _SplashScreen()
-                : (state.unlocked ? const HomeScreen() : const LockScreen()),
+                : (!auth.isSignedIn
+                      ? const LoginScreen()
+                      : (state.unlocked ? const HomeScreen() : const LockScreen())),
           );
         },
       ),
