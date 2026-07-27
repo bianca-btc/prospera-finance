@@ -68,7 +68,17 @@ class InsightsEngine {
 
   /// Gera a lista completa de insights para o período selecionado,
   /// comparando com o período anterior equivalente quando possível.
-  List<Insight> generate(PeriodRange current) {
+  ///
+  /// [upcomingDueItems] — quando informado, deve ser o resultado de
+  /// [AppState.upcomingDue] (fonte única de verdade, com lógica de
+  /// cobertura acumulada para Deudas/Objetivos) e substitui completamente
+  /// a lógica própria deste motor para o item "Deudas próximas a vencer" —
+  /// evita que o Resumo Inteligente e a lista "Próximos vencimientos"
+  /// mostrem informações divergentes sobre o mesmo dado.
+  List<Insight> generate(
+    PeriodRange current, {
+    List<BudgetItem>? upcomingDueItems,
+  }) {
     final insights = <Insight>[];
     final txns = _txnsFor(current);
     final prevTxns = _txnsFor(current.previousEquivalent);
@@ -184,16 +194,33 @@ class InsightsEngine {
     }
 
     // 5) Presupuestos excedidos (con recomendación según controlabilidad).
+    //
+    // BUGFIX: [b.planned] es el valor planificado de UN mes específico
+    // (b.year/b.month), pero [txns] puede contener varios meses cuando el
+    // período seleccionado abarca más de uno. Comparar el total de TODOS
+    // esos meses contra el presupuesto de un solo mes inflaba (o
+    // duplicaba, un mensaje por cada BudgetItem del rango) el "excedido"
+    // mostrado — causa raíz del mensaje "fantasma" de presupuesto
+    // superado que no correspondía a la realidad de ningún mes concreto.
+    // Solución: acotar el realizado al MISMO mes/año del ítem, y generar
+    // como máximo un insight por categoría+subcategoría (evita repetir el
+    // mismo aviso una vez por cada mes del rango).
+    final excededSeen = <String>{};
     for (final b in budgets) {
+      final key = '${b.category}|${b.subcategory}';
+      if (excededSeen.contains(key)) continue;
       final realizado = txns
           .where(
             (t) =>
                 (t.type == TxType.gasto || t.type == TxType.deuda) &&
                 t.category == b.category &&
-                t.subcategory == b.subcategory,
+                t.subcategory == b.subcategory &&
+                t.year == b.year &&
+                t.month == b.month,
           )
           .fold(0.0, (s, t) => s + t.amount);
       if (b.planned > 0 && realizado > b.planned) {
+        excededSeen.add(key);
         final exceso = realizado - b.planned;
         final controllability = _controllabilityOf(b.category, b.subcategory);
         String recomendacion;
@@ -224,42 +251,42 @@ class InsightsEngine {
       }
     }
 
-    // 6) Deudas próximas a vencer.
-    if (debts.isNotEmpty) {
+    // 6) Deudas/Objetivos próximos a vencer — usa EXCLUSIVAMENTE la lista
+    // ya calculada por [AppState.upcomingDue] (fuente única de verdad con
+    // cobertura acumulada), en vez de recalcular con lógica propia. Así se
+    // evita que este mensaje mencione una cuota/aporte que la lista
+    // "Próximos vencimientos" ya considera cubierta (pagos adelantados o
+    // en un solo monto que cubre varios meses).
+    if (upcomingDueItems != null) {
       final now = DateTime.now();
-      for (final d in debts) {
-        if (d.isSettled) continue;
-        final dates = d.installmentDates();
-        final nextIdx = d.paidInstallments;
-        if (nextIdx < dates.length) {
-          final due = dates[nextIdx];
-          final days = due.difference(now).inDays;
-          if (days >= 0 && days <= 10) {
-            insights.add(
-              Insight(
-                text:
-                    'La cuota de "${d.name}" (${formatUsd(d.monthlyInstallment, decimals: false)}) vence en $days día(s).',
-                tone: InsightTone.alerta,
-                iconKey: 'account_balance',
-              ),
-            );
-          }
+      final debtById = {for (final d in debts) d.id: d};
+      final goalById = {for (final g in goals) g.id: g};
+      for (final b in upcomingDueItems) {
+        if (b.dueDate == null) continue;
+        final days = b.dueDate!.difference(now).inDays;
+        if (b.linkedDebtId != null) {
+          final debt = debtById[b.linkedDebtId];
+          if (debt == null) continue;
+          insights.add(
+            Insight(
+              text:
+                  'La cuota de "${debt.name}" (${formatUsd(b.planned, decimals: false)}) vence en ${days <= 0 ? "hoy" : "$days día(s)"}.',
+              tone: InsightTone.alerta,
+              iconKey: 'account_balance',
+            ),
+          );
+        } else if (b.linkedGoalId != null) {
+          final goal = goalById[b.linkedGoalId];
+          if (goal == null) continue;
+          insights.add(
+            Insight(
+              text:
+                  'Para alcanzar "${goal.name}" a tiempo, aporta ${formatUsd(b.planned, decimals: false)} — vence en ${days <= 0 ? "hoy" : "$days día(s)"}.',
+              tone: InsightTone.neutro,
+              iconKey: 'flag',
+            ),
+          );
         }
-      }
-    }
-
-    // 7) Objetivos: aporte necesario este mes.
-    for (final g in goals) {
-      if (g.isCompleted) continue;
-      if (g.monthlyTarget > 0) {
-        insights.add(
-          Insight(
-            text:
-                'Para alcanzar "${g.name}" a tiempo, aporta ${formatUsd(g.monthlyTarget, decimals: false)} este mes.',
-            tone: InsightTone.neutro,
-            iconKey: 'flag',
-          ),
-        );
       }
     }
 

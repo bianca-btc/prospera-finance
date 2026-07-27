@@ -145,6 +145,25 @@ class AppState extends ChangeNotifier {
     }
 
     reconcileDeficitRollovers();
+    // Limpia ítems de planificación "huérfanos" (vinculados a una Deuda u
+    // Objetivo que ya no existe) y duplicados — puede ocurrir en bases
+    // antiguas migradas donde la deuda/objetivo fue eliminada antes de que
+    // existiera la limpieza automática de vínculos. Sin esto, aparecían
+    // notificaciones de "próximos vencimientos" para planificaciones que
+    // el usuario ya había borrado.
+    var purged = _purgeOrphanedAndDuplicateBudgetItems();
+    // BUGFIX (vencimentos fantasma): bases criadas antes da correção de
+    // `installmentDates()`/`contributionDates()` podem ter itens de
+    // planejamento com `dueDate`/mês "vazados" para o mês seguinte (ex.:
+    // dia 31 gerado num mês de 30 dias). Para reconciliar dados legados,
+    // removemos e regeneramos TODOS os itens vinculados a Deudas/Objetivos
+    // com as datas já corrigidas — mesmo comportamento que já ocorre
+    // normalmente ao editar uma Deuda/Objetivo ([updateDebt]/[updateGoal]),
+    // então é seguro repetir aqui. Nunca afeta transações (vinculadas por
+    // debtId/goalId, não por budgetItemId).
+    _budgets.removeWhere((b) => b.linkedDebtId != null);
+    _budgets.removeWhere((b) => b.linkedGoalId != null);
+    purged = true;
     // Garante que dívidas/objetivos tenham seus itens de planejamento e
     // que os valores acumulados estejam sincronizados com as transações
     // (fonte única de verdade), mesmo em bases antigas migradas.
@@ -155,9 +174,56 @@ class AppState extends ChangeNotifier {
     for (final g in _goals) {
       _generateContributionsForGoal(g);
     }
+    if (purged) {
+      await _persistBudgets();
+    }
 
     _loading = false;
     notifyListeners();
+  }
+
+  /// Elimina de [_budgets] cualquier ítem "huérfano" — vinculado
+  /// (`linkedDebtId`/`linkedGoalId`) a una Deuda u Objetivo que ya no
+  /// existe en la base — y también deduplica ítems generados dos veces
+  /// para el mismo mes+vínculo (mismo bug de origen: datos legados de
+  /// antes de que existiera la deduplicación en
+  /// [_generateInstallmentsForDebt]/[_generateContributionsForGoal]).
+  /// Devuelve `true` si algo fue eliminado (para saber si hay que
+  /// persistir). Nunca toca transacciones ni KPIs.
+  bool _purgeOrphanedAndDuplicateBudgetItems() {
+    final debtIds = _debts.map((d) => d.id).toSet();
+    final goalIds = _goals.map((g) => g.id).toSet();
+    final before = _budgets.length;
+
+    // 1) Huérfanos: apuntan a un id de deuda/objetivo que ya no existe.
+    _budgets.removeWhere((b) {
+      if (b.linkedDebtId != null && !debtIds.contains(b.linkedDebtId)) {
+        return true;
+      }
+      if (b.linkedGoalId != null && !goalIds.contains(b.linkedGoalId)) {
+        return true;
+      }
+      return false;
+    });
+
+    // 2) Duplicados: más de un ítem para el mismo mes+deuda o mes+objetivo.
+    final seenDebt = <String>{};
+    final seenGoal = <String>{};
+    _budgets.removeWhere((b) {
+      if (b.linkedDebtId != null) {
+        final key = '${b.year}-${b.month}-${b.linkedDebtId}';
+        if (seenDebt.contains(key)) return true;
+        seenDebt.add(key);
+      }
+      if (b.linkedGoalId != null) {
+        final key = '${b.year}-${b.month}-${b.linkedGoalId}';
+        if (seenGoal.contains(key)) return true;
+        seenGoal.add(key);
+      }
+      return false;
+    });
+
+    return _budgets.length != before;
   }
 
   Future<void> _seed() async {
@@ -771,7 +837,7 @@ class AppState extends ChangeNotifier {
               status: TxStatus.pendiente,
               description: b.description,
               dueDate: b.dueDate != null
-                  ? DateTime(to.year, to.month, b.dueDate!.day)
+                  ? safeMonthDate(to.year, to.month, b.dueDate!.day)
                   : null,
               // Dívidas/objetivos não são replicados manualmente: eles já
               // geram seus próprios itens mensais automaticamente.
@@ -830,7 +896,7 @@ class AppState extends ChangeNotifier {
               status: TxStatus.pendiente,
               description: b.description,
               dueDate: b.dueDate != null
-                  ? DateTime(to.year, to.month, b.dueDate!.day)
+                  ? safeMonthDate(to.year, to.month, b.dueDate!.day)
                   : null,
             ),
           );
@@ -1772,15 +1838,112 @@ class AppState extends ChangeNotifier {
   List<BudgetItem> upcomingDue({int days = 7}) {
     final now = DateTime.now();
     final limit = now.add(Duration(days: days));
-    return _budgets.where((b) {
-      if (b.dueDate == null) return false;
-      if (isBudgetItemCovered(b)) return false;
-      return b.dueDate!.isAfter(now.subtract(const Duration(days: 1))) &&
+    final debtById = {for (final d in _debts) d.id: d};
+    final goalById = {for (final g in _goals) g.id: g};
+    final result = <BudgetItem>[];
+    final seenKeys = <String>{};
+
+    // BUGFIX DE RAÍZ (vencimientos fantasma): la cobertura mes-a-mes
+    // ([isBudgetItemCovered]/comparar por [YearMonth] exacto) falla cuando
+    // el usuario paga/aporta un monto que no cae exactamente en el mes de
+    // una cuota específica — ej.: liquidar una deuda con UN solo pago que
+    // cubre varias cuotas futuras de una vez, o adelantar varios meses de
+    // aporte de un objetivo en un solo movimiento. En esos casos, las
+    // cuotas de los meses siguientes NUNCA reciben su propia transacción
+    // (porque la deuda/objetivo ya fue resuelto/adelantado), y quedaban
+    // "pendientes" para siempre — apareciendo como vencimientos de algo
+    // que, en la práctica, ya no existe en la app.
+    //
+    // Solución definitiva: para ítems vinculados a Deuda/Objetivo, en vez
+    // de comparar transacciones del MISMO mes, se compara el TOTAL PAGADO/
+    // APORTADO acumulado (fuente única de verdad: [Debt.paidAmount]/
+    // [InvestmentGoal.currentAmount]) contra la SUMA ACUMULADA de lo
+    // planificado hasta (e incluyendo) ese ítem, en orden cronológico. Si
+    // lo acumulado ya cubre lo esperado hasta ese punto, el ítem se
+    // considera cubierto sin importar en qué mes exacto cayó el pago.
+    final Map<String, List<BudgetItem>> byDebt = {};
+    final Map<String, List<BudgetItem>> byGoal = {};
+    for (final b in _budgets) {
+      if (b.linkedDebtId != null) {
+        byDebt.putIfAbsent(b.linkedDebtId!, () => []).add(b);
+      }
+      if (b.linkedGoalId != null) {
+        byGoal.putIfAbsent(b.linkedGoalId!, () => []).add(b);
+      }
+    }
+    int cmpByDue(BudgetItem a, BudgetItem b) =>
+        (a.dueDate ?? DateTime(a.year, a.month)).compareTo(
+          b.dueDate ?? DateTime(b.year, b.month),
+        );
+    for (final list in byDebt.values) {
+      list.sort(cmpByDue);
+    }
+    for (final list in byGoal.values) {
+      list.sort(cmpByDue);
+    }
+
+    for (final b in _budgets) {
+      if (b.dueDate == null) continue;
+      // Defensa extra: nunca mostrar un ítem vinculado a una Deuda/Objetivo
+      // que ya no existe (huérfano) — se limpian en [init], pero esto
+      // garantiza que jamás aparezcan aunque queden datos residuales.
+      if (b.linkedDebtId != null && !debtById.containsKey(b.linkedDebtId)) {
+        continue;
+      }
+      if (b.linkedGoalId != null && !goalById.containsKey(b.linkedGoalId)) {
+        continue;
+      }
+
+      if (b.linkedDebtId != null) {
+        final debt = debtById[b.linkedDebtId]!;
+        if (debt.isSettled) continue;
+        final schedule = byDebt[b.linkedDebtId] ?? [b];
+        final idx = schedule.indexOf(b);
+        final acumuladoEsperado = schedule
+            .take(idx + 1)
+            .fold(0.0, (s, x) => s + x.planned);
+        if (debt.paidAmount >= acumuladoEsperado - 0.01) continue;
+      } else if (b.linkedGoalId != null) {
+        final goal = goalById[b.linkedGoalId]!;
+        if (goal.isCompleted) continue;
+        final schedule = byGoal[b.linkedGoalId] ?? [b];
+        final idx = schedule.indexOf(b);
+        final acumuladoEsperado = schedule
+            .take(idx + 1)
+            .fold(0.0, (s, x) => s + x.planned);
+        if (goal.currentAmount >= acumuladoEsperado - 0.01) continue;
+      } else {
+        // Planificación de Gasto normal (sin vínculo): mantiene la
+        // cobertura por mes exacto, que sí es correcta en este caso (no
+        // existe "cronograma" ni pagos adelantados fuera de mes).
+        if (isBudgetItemCovered(b)) continue;
+      }
+
+      final isDue =
+          b.dueDate!.isAfter(now.subtract(const Duration(days: 1))) &&
           b.dueDate!.isBefore(limit);
-    }).toList()..sort((a, b) => a.dueDate!.compareTo(b.dueDate!));
+      if (!isDue) continue;
+      // Defensa extra contra duplicados: no repetir el mismo
+      // mes+categoría+subcategoría+vínculo dos veces en la lista.
+      final key =
+          '${b.year}-${b.month}-${b.category}-${b.subcategory}-${b.linkedDebtId}-${b.linkedGoalId}';
+      if (seenKeys.contains(key)) continue;
+      seenKeys.add(key);
+      result.add(b);
+    }
+    result.sort((a, b) => a.dueDate!.compareTo(b.dueDate!));
+    return result;
   }
 
   // ---------------- Resumo Inteligente (motor de insights) ----------------
+  /// IMPORTANTE: los mensajes de "vencimiento próximo" (deudas/objetivos)
+  /// del Resumo Inteligente usan la MISMA lista ya calculada por
+  /// [upcomingDue] (fuente única de verdad, con cobertura acumulada) — en
+  /// vez de que [InsightsEngine] recalcule esto por su cuenta con lógica
+  /// propia. Esto evita que ambas secciones del Resumen (el aviso en
+  /// lenguaje natural y la lista de "Próximos vencimientos") queden
+  /// desincronizadas y muestren mensajes contradictorios o "fantasma"
+  /// sobre planificaciones que, en la práctica, ya están cubiertas.
   List<Insight> generateInsights() {
     final engine = InsightsEngine(
       allTxns: _txns,
@@ -1789,7 +1952,7 @@ class AppState extends ChangeNotifier {
       goals: _goals,
       debts: _debts,
     );
-    return engine.generate(_selectedRange);
+    return engine.generate(_selectedRange, upcomingDueItems: upcomingDue(days: 10));
   }
 
   // ---------------- Export/Import ----------------

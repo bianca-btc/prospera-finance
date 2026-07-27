@@ -1,3 +1,5 @@
+import '../utils/period.dart';
+
 /// Dívida com parcelamento automático: o usuário informa apenas o valor
 /// total, a data inicial e a quantidade de meses; o app divide o valor
 /// igualmente e gera uma parcela mensal que entra automaticamente no
@@ -49,12 +51,21 @@ class Debt {
   }
 
   /// Lista de meses (ano/mês) e valores das parcelas geradas por esta dívida.
+  ///
+  /// BUGFIX: usar `DateTime(y, mm, startDate.day)` diretamente causava
+  /// "vencimentos fantasma" quando [startDate.day] não existe no mês de
+  /// destino (ex.: dia 31 caindo num mês de 28/29/30 dias) — o Dart
+  /// normaliza automaticamente a data para o mês SEGUINTE (ex.: 31 de
+  /// fevereiro vira 2/3 de março), fazendo a parcela "vazar" para o mês
+  /// errado e às vezes colidir com a parcela seguinte no mesmo mês
+  /// (dedupe silencioso) enquanto o mês original fica sem nenhuma parcela.
+  /// Corrigido limitando o dia ao último dia válido do mês de destino.
   List<DateTime> installmentDates() {
     return List.generate(months, (i) {
       final m = startDate.month + i;
       final y = startDate.year + (m - 1) ~/ 12;
       final mm = ((m - 1) % 12) + 1;
-      return DateTime(y, mm, startDate.day);
+      return safeMonthDate(y, mm, startDate.day);
     });
   }
 

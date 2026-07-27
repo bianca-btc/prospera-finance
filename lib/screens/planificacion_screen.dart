@@ -12,14 +12,15 @@ import '../utils/formatters.dart';
 import '../utils/period.dart';
 import '../widgets/common.dart';
 import '../widgets/filter_bar.dart';
-import '../widgets/period_selector.dart';
 import 'plan_detail_screen.dart';
 import 'plan_form_screen.dart';
 
-/// Filtro superior estilo "chips" (Todos/Gastos/Dívidas/Objetivos) — no
-/// oculta secciones distintas, solo decide cuáles de las 3 categorías de
-/// planificación se muestran en la lista.
-enum _PlanFilter { todos, gastos, deudas, objetivos }
+/// Filtro superior estilo "chips" — no oculta secciones distintas, solo
+/// decide cuáles categorías de planificación se muestran en la lista.
+/// Planificación no administra ingresos planificados (no hay "presupuesto
+/// de ingreso" en este modelo), por eso no incluye esa opción — a
+/// diferencia de Transacciones/Análisis, que sí la tienen.
+enum _PlanFilter { todos, gastos, objetivos, deudas }
 
 class PlanificacionScreen extends StatefulWidget {
   const PlanificacionScreen({super.key});
@@ -38,22 +39,23 @@ class _PlanificacionScreenState extends State<PlanificacionScreen> {
   _PlanFilter _filter = _PlanFilter.todos;
 
   // ------- Filtros avançados (categoria/subcategoria/país/status) -------
-  String? _advCategory;
-  String? _advSubcategory;
-  String? _advCountry;
-  TxStatus? _advStatus;
+  // Seleção múltipla: Set vazio = "sem filtro" nessa dimensão.
+  final Set<String> _advCategory = {};
+  final Set<String> _advSubcategory = {};
+  final Set<String> _advCountry = {};
+  final Set<TxStatus> _advStatus = {};
 
   bool get _hasAdvancedFilters =>
-      _advCategory != null ||
-      _advSubcategory != null ||
-      _advCountry != null ||
-      _advStatus != null;
+      _advCategory.isNotEmpty ||
+      _advSubcategory.isNotEmpty ||
+      _advCountry.isNotEmpty ||
+      _advStatus.isNotEmpty;
 
   void _clearAdvancedFilters() {
-    _advCategory = null;
-    _advSubcategory = null;
-    _advCountry = null;
-    _advStatus = null;
+    _advCategory.clear();
+    _advSubcategory.clear();
+    _advCountry.clear();
+    _advStatus.clear();
   }
 
   bool _matchesAdvanced({
@@ -62,12 +64,16 @@ class _PlanificacionScreenState extends State<PlanificacionScreen> {
     String? country,
     TxStatus? status,
   }) {
-    if (_advCategory != null && category != _advCategory) return false;
-    if (_advSubcategory != null && subcategory != _advSubcategory) {
+    if (_advCategory.isNotEmpty && !_advCategory.contains(category)) {
       return false;
     }
-    if (_advCountry != null && country != _advCountry) return false;
-    if (_advStatus != null && status != _advStatus) return false;
+    if (_advSubcategory.isNotEmpty && !_advSubcategory.contains(subcategory)) {
+      return false;
+    }
+    if (_advCountry.isNotEmpty && !_advCountry.contains(country)) {
+      return false;
+    }
+    if (_advStatus.isNotEmpty && !_advStatus.contains(status)) return false;
     return true;
   }
 
@@ -138,7 +144,6 @@ class _PlanificacionScreenState extends State<PlanificacionScreen> {
         _filter == _PlanFilter.todos || _filter == _PlanFilter.deudas;
     final showObjetivos =
         _filter == _PlanFilter.todos || _filter == _PlanFilter.objetivos;
-
     final isEmptyForFilter =
         (!showGastos || budgets.isEmpty) &&
         (!showDeudas || debts.isEmpty) &&
@@ -187,12 +192,31 @@ class _PlanificacionScreenState extends State<PlanificacionScreen> {
             title: 'Planificación',
             subtitle:
                 'Organiza tus gastos, objetivos y deudas antes de que ocurran.',
-            trailing: const PeriodSelector(inline: true),
           ),
+          const SizedBox(height: AppSpacing.sm),
+          // Filtro segmentado (Todos / Gastos / Dívidas / Objetivos) +
+          // botón de filtros avançados — igual ao padrão adotado em
+          // Transações/Análisis — seguidos, na MESMA linha e alinhados à
+          // direita, dos botões "Seleção múltipla" e "Gemini" (sugestão
+          // automática), para deixar o topo da tela mais limpo e consistente.
           Row(
-            mainAxisAlignment: MainAxisAlignment.end,
             children: [
-              if (showGastos)
+              Expanded(
+                child: SegmentedFilterBar<_PlanFilter>(
+                  options: const [
+                    FilterOption(_PlanFilter.todos, 'Todos'),
+                    FilterOption(_PlanFilter.gastos, 'Gastos'),
+                    FilterOption(_PlanFilter.objetivos, 'Objetivos'),
+                    FilterOption(_PlanFilter.deudas, 'Deudas'),
+                  ],
+                  selected: _filter,
+                  onChanged: (f) => setState(() => _filter = f),
+                  onAdvancedTap: () => _openAdvancedFilters(context, state),
+                  advancedActive: _hasAdvancedFilters,
+                ),
+              ),
+              if (showGastos) ...[
+                const SizedBox(width: AppSpacing.xs),
                 IconButton(
                   onPressed: budgets.isEmpty ? null : _toggleSelectionMode,
                   icon: Icon(
@@ -203,28 +227,14 @@ class _PlanificacionScreenState extends State<PlanificacionScreen> {
                   ),
                   tooltip: _selectionMode ? 'Cancelar' : 'Seleccionar',
                 ),
+              ],
+              const SizedBox(width: AppSpacing.xs),
               IconButton(
                 onPressed: () => _applySuggestion(context, state),
                 icon: const Icon(Icons.auto_awesome_rounded, size: 20),
                 tooltip: 'Sugerir próximo mes',
               ),
             ],
-          ),
-          // Filtro segmentado (Todos / Gastos / Dívidas / Objetivos), em
-          // linha única — igual ao padrão adotado em Transações — mais o
-          // botão de filtros avançados (categoria/subcategoria/país/status
-          // + replicação).
-          SegmentedFilterBar<_PlanFilter>(
-            options: const [
-              FilterOption(_PlanFilter.todos, 'Todos'),
-              FilterOption(_PlanFilter.gastos, 'Gastos'),
-              FilterOption(_PlanFilter.objetivos, 'Objetivos'),
-              FilterOption(_PlanFilter.deudas, 'Deudas'),
-            ],
-            selected: _filter,
-            onChanged: (f) => setState(() => _filter = f),
-            onAdvancedTap: () => _openAdvancedFilters(context, state),
-            advancedActive: _hasAdvancedFilters,
           ),
           const SizedBox(height: AppSpacing.md),
           if (isEmptyForFilter)
@@ -305,13 +315,12 @@ class _PlanificacionScreenState extends State<PlanificacionScreen> {
       builder: (ctx, setModalState) {
         return StatefulBuilder(
           builder: (ctx, localSet) {
-            final subOptions = _advCategory == null
-                ? <String>[]
-                : (categories
-                          .where((c) => c.name == _advCategory)
-                          .map((c) => c.subcategories)
-                          .firstOrNull ??
-                      const <String>[]);
+            final subOptions = _advCategory.isEmpty
+                ? <String>{}
+                : categories
+                      .where((c) => _advCategory.contains(c.name))
+                      .expand((c) => c.subcategories)
+                      .toSet();
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -322,23 +331,29 @@ class _PlanificacionScreenState extends State<PlanificacionScreen> {
                   children: [
                     ChoiceChip(
                       label: const Text('Todas'),
-                      selected: _advCategory == null,
+                      selected: _advCategory.isEmpty,
                       onSelected: (_) {
                         setState(() {
-                          _advCategory = null;
-                          _advSubcategory = null;
+                          _advCategory.clear();
+                          _advSubcategory.clear();
                         });
                         localSet(() {});
                       },
                     ),
                     ...categories.map(
-                      (c) => ChoiceChip(
+                      (c) => FilterChip(
                         label: Text(c.name),
-                        selected: _advCategory == c.name,
-                        onSelected: (_) {
+                        selected: _advCategory.contains(c.name),
+                        onSelected: (sel) {
                           setState(() {
-                            _advCategory = c.name;
-                            _advSubcategory = null;
+                            if (sel) {
+                              _advCategory.add(c.name);
+                            } else {
+                              _advCategory.remove(c.name);
+                              _advSubcategory.removeWhere(
+                                (s) => c.subcategories.contains(s),
+                              );
+                            }
                           });
                           localSet(() {});
                         },
@@ -354,18 +369,22 @@ class _PlanificacionScreenState extends State<PlanificacionScreen> {
                     children: [
                       ChoiceChip(
                         label: const Text('Todas'),
-                        selected: _advSubcategory == null,
+                        selected: _advSubcategory.isEmpty,
                         onSelected: (_) {
-                          setState(() => _advSubcategory = null);
+                          setState(_advSubcategory.clear);
                           localSet(() {});
                         },
                       ),
                       ...subOptions.map(
-                        (s) => ChoiceChip(
+                        (s) => FilterChip(
                           label: Text(s),
-                          selected: _advSubcategory == s,
-                          onSelected: (_) {
-                            setState(() => _advSubcategory = s);
+                          selected: _advSubcategory.contains(s),
+                          onSelected: (sel) {
+                            setState(
+                              () => sel
+                                  ? _advSubcategory.add(s)
+                                  : _advSubcategory.remove(s),
+                            );
                             localSet(() {});
                           },
                         ),
@@ -380,19 +399,23 @@ class _PlanificacionScreenState extends State<PlanificacionScreen> {
                   children: [
                     ChoiceChip(
                       label: const Text('Todos'),
-                      selected: _advCountry == null,
+                      selected: _advCountry.isEmpty,
                       onSelected: (_) {
-                        setState(() => _advCountry = null);
+                        setState(_advCountry.clear);
                         localSet(() {});
                       },
                     ),
                     ...countries.map(
-                      (c) => ChoiceChip(
+                      (c) => FilterChip(
                         label: Text(c),
-                        selected: _advCountry == c,
-                        onSelected: (_) {
-                          setState(() => _advCountry = c);
-                          localSet(() {});
+                        selected: _advCountry.contains(c),
+                        onSelected: (sel) {
+                          setState(
+                            () => sel
+                                ? _advCountry.add(c)
+                                : _advCountry.remove(c),
+                          );
+                                       localSet(() {});
                         },
                       ),
                     ),
@@ -404,25 +427,33 @@ class _PlanificacionScreenState extends State<PlanificacionScreen> {
                   children: [
                     ChoiceChip(
                       label: const Text('Todos'),
-                      selected: _advStatus == null,
+                      selected: _advStatus.isEmpty,
                       onSelected: (_) {
-                        setState(() => _advStatus = null);
+                        setState(_advStatus.clear);
                         localSet(() {});
                       },
                     ),
-                    ChoiceChip(
+                    FilterChip(
                       label: const Text('Pagado'),
-                      selected: _advStatus == TxStatus.pagado,
-                      onSelected: (_) {
-                        setState(() => _advStatus = TxStatus.pagado);
+                      selected: _advStatus.contains(TxStatus.pagado),
+                      onSelected: (sel) {
+                        setState(
+                          () => sel
+                              ? _advStatus.add(TxStatus.pagado)
+                              : _advStatus.remove(TxStatus.pagado),
+                        );
                         localSet(() {});
                       },
                     ),
-                    ChoiceChip(
+                    FilterChip(
                       label: const Text('Pendiente'),
-                      selected: _advStatus == TxStatus.pendiente,
-                      onSelected: (_) {
-                        setState(() => _advStatus = TxStatus.pendiente);
+                      selected: _advStatus.contains(TxStatus.pendiente),
+                      onSelected: (sel) {
+                        setState(
+                          () => sel
+                              ? _advStatus.add(TxStatus.pendiente)
+                              : _advStatus.remove(TxStatus.pendiente),
+                        );
                         localSet(() {});
                       },
                     ),

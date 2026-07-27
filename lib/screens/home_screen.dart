@@ -2,9 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../state/app_state.dart';
-import '../theme/app_theme.dart';
 import '../widgets/app_logo.dart';
 import '../widgets/kpi_header.dart';
+import '../widgets/period_selector.dart';
 import 'resumen_screen.dart';
 import 'transacciones_screen.dart';
 import 'planificacion_screen.dart';
@@ -49,13 +49,14 @@ class _HomeScreenState extends State<HomeScreen> {
           ],
         ),
         actions: [
-          if (_tab == 0) ...[
-            _FocusToggleButton(
-              active: _focusOnList,
-              onTap: () => setState(() => _focusOnList = !_focusOnList),
-            ),
-            const SizedBox(width: 4),
-          ],
+          // Filtro global de período: siempre en la misma posición/tamaño
+          // en TODAS las pestañas (Resumen/Transacciones/Planificación/
+          // Análisis), a la izquierda del ícono de ajustes — reducido y
+          // en la primera línea de la pantalla para minimizar el espacio
+          // vertical ocupado (en Resumen, libera el espacio que antes
+          // ocupaba, dejándolo disponible para los KPIs).
+          const PeriodSelector(appBar: true),
+          const SizedBox(width: 6),
           IconButton(
             tooltip: 'Ajustes',
             icon: const Icon(Icons.settings_outlined),
@@ -90,8 +91,15 @@ class _HomeScreenState extends State<HomeScreen> {
               onInversionesTap: () => setState(() => _tab = 2),
               onDeudasTap: () => setState(() => _tab = 2),
             ),
-            const SizedBox(height: 4),
-            const Divider(height: 1),
+            // Control discreto para colapsar/expandir los KPIs: una franja
+            // fina y centrada (chevron), pegada al header, en vez de un
+            // botón grande en la AppBar. Su posición contextual (justo
+            // debajo del propio contenido que controla) lo hace mucho más
+            // intuitivo y visualmente ligero.
+            _KpiCollapseHandle(
+              collapsed: _focusOnList,
+              onTap: () => setState(() => _focusOnList = !_focusOnList),
+            ),
           ],
           Expanded(child: _pages[_tab]),
         ],
@@ -126,41 +134,38 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
-/// Botón que alterna el modo "enfocar listado" (KPIs reducidos, más
-/// espacio para las listas de Resumen/Transacciones/Planificación/Análisis).
-class _FocusToggleButton extends StatelessWidget {
-  final bool active;
+/// Control discreto para colapsar/expandir los KPIs — reemplaza al antiguo
+/// botón grande de la AppBar ([_FocusToggleButton], eliminado por ser
+/// demasiado grande e intrusivo). Se muestra como una franja delgada
+/// pegada justo debajo del header de KPIs, con un pequeño chevron
+/// centrado que indica la dirección del gesto (colapsar/expandir) — un
+/// patrón visual común y liviano ("handle" de arrastre/colapso), que no
+/// compite en tamaño ni protagonismo con el resto de la AppBar.
+class _KpiCollapseHandle extends StatelessWidget {
+  final bool collapsed;
   final VoidCallback onTap;
-  const _FocusToggleButton({required this.active, required this.onTap});
+  const _KpiCollapseHandle({required this.collapsed, required this.onTap});
 
   @override
   Widget build(BuildContext context) {
+    final mutedColor = Theme.of(
+      context,
+    ).textTheme.bodySmall?.color?.withValues(alpha: 0.55);
     return Tooltip(
-      message: active
-          ? 'Mostrar KPIs completos'
-          : 'Enfocar listado (reducir KPIs)',
+      message: collapsed ? 'Mostrar KPIs completos' : 'Reducir KPIs',
       child: InkWell(
-        borderRadius: BorderRadius.circular(10),
         onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            color: active
-                ? AppColors.brandAmber.withValues(alpha: 0.18)
-                : null,
-            border: Border.all(
-              color: active
-                  ? AppColors.brandAmber
-                  : AppColors.darkBorder,
+        child: SizedBox(
+          height: 18,
+          width: double.infinity,
+          child: Center(
+            child: Icon(
+              collapsed
+                  ? Icons.keyboard_arrow_down_rounded
+                  : Icons.keyboard_arrow_up_rounded,
+              size: 20,
+              color: mutedColor,
             ),
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: Icon(
-            active
-                ? Icons.fullscreen_exit_rounded
-                : Icons.fullscreen_rounded,
-            size: 18,
-            color: active ? AppColors.brandAmber : null,
           ),
         ),
       ),

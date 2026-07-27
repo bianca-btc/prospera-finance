@@ -1,3 +1,14 @@
+/// Constrói uma [DateTime] segura, limitando [day] ao último dia válido do
+/// mês [year]/[month] — evita que `DateTime(year, month, day)` "vaze"
+/// silenciosamente para o mês seguinte quando [day] não existe nesse mês
+/// (ex.: 31 de fevereiro), que era a causa raiz dos "vencimentos fantasma"
+/// (itens de planejamento com data errada) ao replicar/gerar parcelas de
+/// Deudas/Objetivos/Planificación.
+DateTime safeMonthDate(int year, int month, int day) {
+  final lastDayOfMonth = DateTime(year, month + 1, 0).day;
+  return DateTime(year, month, day > lastDayOfMonth ? lastDayOfMonth : day);
+}
+
 /// Representa um par Ano/Mês.
 class YearMonth implements Comparable<YearMonth> {
   final int year;

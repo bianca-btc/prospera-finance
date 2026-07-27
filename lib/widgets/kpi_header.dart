@@ -5,7 +5,6 @@ import '../state/app_state.dart';
 import '../theme/app_theme.dart';
 import '../utils/formatters.dart';
 import 'common.dart';
-import 'period_selector.dart';
 
 /// Header de KPIs, dividido en dos categorías claramente distintas:
 ///
@@ -45,7 +44,9 @@ class KpiHeader extends StatelessWidget {
     // -------- Situación financiera actual (NO dependen del período) -----
     final disponible = state.ingresoDisponible;
     final objetivos = state.objetivosActuales;
-    final deudas = state.totalDeudaPendiente;
+    // KPI de Deudas muestra PAGADO ACUMULADO / TOTAL de la deuda (mismo
+    // patrón que Objetivos: aportado/meta), no el saldo pendiente.
+    final deudas = state.debtsPaidAmountAbs;
 
     // -------- Flujo del período (SÍ dependen del filtro global) --------
     final ingresos = state.totalIngresos;
@@ -68,63 +69,57 @@ class KpiHeader extends StatelessWidget {
     final metaConcluida = state.goalsCompletedAbs;
     final metaSuperada = state.goalsExceededAbs;
 
+    // NOTA: el selector de período ya NO vive aquí -- fue movido a la
+    // AppBar (ver [PeriodSelector.appBar]), donde se renderiza de forma
+    // idéntica en TODAS las pestañas (Resumen/Transacciones/Planificación/
+    // Análisis) y nunca cambia de posición/apariencia al colapsar/expandir
+    // los KPIs. Esto libera espacio vertical que antes ocupaba el filtro,
+    // dedicado ahora por completo al contenido de KPIs.
     if (compact) {
-      // Modo compacto: header reducido (usado al "enfocar listados").
+      // Modo compacto: header reducido (usado al "enfocar listados"). Los
+      // 5 KPIs se comprimen en una sola fila, ahora con todo el ancho
+      // disponible (ya no comparte espacio con el selector de período).
       return Padding(
         padding: const EdgeInsets.symmetric(
           horizontal: AppSpacing.lg,
           vertical: 6,
         ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        child: Row(
           children: [
-            Row(
-              children: [
-                const Spacer(),
-                const PeriodSelector(compactHeader: true),
-              ],
+            Expanded(
+              child: _CompactStat(
+                label: 'Disponible',
+                value: formatUsd(disponible, decimals: false),
+                color: disponible >= 0 ? AppColors.ingreso : AppColors.gasto,
+              ),
             ),
-            const SizedBox(height: 4),
-            Row(
-              children: [
-                Expanded(
-                  child: _CompactStat(
-                    label: 'Disponible',
-                    value: formatUsd(disponible, decimals: false),
-                    color: disponible >= 0
-                        ? AppColors.ingreso
-                        : AppColors.gasto,
-                  ),
-                ),
-                Expanded(
-                  child: _CompactStat(
-                    label: 'Ingresos',
-                    value: formatUsd(ingresos, decimals: false),
-                    color: AppColors.ingreso,
-                  ),
-                ),
-                Expanded(
-                  child: _CompactStat(
-                    label: 'Gastos',
-                    value: formatUsd(gastos, decimals: false),
-                    color: AppColors.gasto,
-                  ),
-                ),
-                Expanded(
-                  child: _CompactStat(
-                    label: 'Objetivos',
-                    value: formatUsd(objetivos, decimals: false),
-                    color: AppColors.inversion,
-                  ),
-                ),
-                Expanded(
-                  child: _CompactStat(
-                    label: 'Deudas',
-                    value: formatUsd(deudas, decimals: false),
-                    color: AppColors.warning,
-                  ),
-                ),
-              ],
+            Expanded(
+              child: _CompactStat(
+                label: 'Ingresos',
+                value: formatUsd(ingresos, decimals: false),
+                color: AppColors.ingreso,
+              ),
+            ),
+            Expanded(
+              child: _CompactStat(
+                label: 'Gastos',
+                value: formatUsd(gastos, decimals: false),
+                color: AppColors.gasto,
+              ),
+            ),
+            Expanded(
+              child: _CompactStat(
+                label: 'Objetivos',
+                value: formatUsd(objetivos, decimals: false),
+                color: AppColors.inversion,
+              ),
+            ),
+            Expanded(
+              child: _CompactStat(
+                label: 'Deudas',
+                value: formatUsd(deudas, decimals: false),
+                color: AppColors.warning,
+              ),
             ),
           ],
         ),
@@ -139,8 +134,6 @@ class KpiHeader extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(children: [const Spacer(), const PeriodSelector(inline: true)]),
-          const SizedBox(height: 8),
           // Bloque 1: Saldo Disponible -- indicador principal, visualmente
           // destacado y distinto de los demás 4 KPIs. Nunca depende del
           // período ni de filtros avanzados.

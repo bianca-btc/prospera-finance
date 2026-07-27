@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+import '../services/auth_service.dart';
 import '../services/export_import_service.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
@@ -115,13 +116,82 @@ class SettingsScreen extends StatelessWidget {
             ),
           ),
           const SizedBox(height: AppSpacing.xl),
-          SectionTitle(title: 'Seguridad'),
-          SectionCard(child: _PinSection(state: state)),
-          const SizedBox(height: AppSpacing.xl),
           SectionTitle(title: 'Datos'),
           SectionCard(child: _DataSection(state: state)),
+          const SizedBox(height: AppSpacing.xl),
+          SectionTitle(title: 'Cuenta'),
+          SectionCard(child: const _AccountSection()),
         ],
       ),
+    );
+  }
+}
+
+/// Cierre de sesión: termina la sesión de Supabase Auth (y de Google, si
+/// corresponde) y redirige automáticamente a la pantalla de login — el
+/// gate en `main.dart` (`!auth.isSignedIn ? LoginScreen() : ...`) reacciona
+/// solo al cambio de estado de [AuthService], sin necesidad de navegación
+/// manual.
+class _AccountSection extends StatelessWidget {
+  const _AccountSection();
+
+  Future<void> _confirmSignOut(BuildContext context) async {
+    final auth = context.read<AuthService>();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Salir de la cuenta'),
+        content: const Text('¿Deseas cerrar tu sesión actual?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancelar'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text(
+              'Salir',
+              style: TextStyle(color: AppColors.gasto),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      await auth.signOut();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final auth = context.watch<AuthService>();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (auth.currentUser != null)
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: const Icon(
+              Icons.account_circle_rounded,
+              color: AppColors.brandAmber,
+            ),
+            title: Text(
+              auth.currentUser!.displayName?.isNotEmpty == true
+                  ? auth.currentUser!.displayName!
+                  : auth.currentUser!.email,
+            ),
+            subtitle: Text(auth.currentUser!.email),
+          ),
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: const Icon(Icons.logout_rounded, color: AppColors.gasto),
+          title: const Text(
+            'Salir de la cuenta (Logout)',
+            style: TextStyle(color: AppColors.gasto, fontWeight: FontWeight.w600),
+          ),
+          onTap: () => _confirmSignOut(context),
+        ),
+      ],
     );
   }
 }
@@ -160,75 +230,6 @@ class _CardVisibilitySection extends StatelessWidget {
           )
           .toList(),
     );
-  }
-}
-
-class _PinSection extends StatelessWidget {
-  final AppState state;
-  const _PinSection({required this.state});
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        ListTile(
-          contentPadding: EdgeInsets.zero,
-          leading: const Icon(Icons.pin_rounded, color: AppColors.brandAmber),
-          title: Text(state.hasPin ? 'PIN configurado' : 'Sin PIN'),
-          subtitle: Text(
-            state.hasPin
-                ? 'Tu acceso local está protegido'
-                : 'Protege el acceso a la app con un PIN de 4 dígitos',
-          ),
-          trailing: TextButton(
-            onPressed: () => _setPinDialog(context),
-            child: Text(state.hasPin ? 'Cambiar' : 'Configurar'),
-          ),
-        ),
-        if (state.hasPin)
-          Align(
-            alignment: Alignment.centerLeft,
-            child: TextButton(
-              onPressed: () => state.setPin(null),
-              child: const Text(
-                'Quitar PIN',
-                style: TextStyle(color: AppColors.gasto),
-              ),
-            ),
-          ),
-      ],
-    );
-  }
-
-  Future<void> _setPinDialog(BuildContext context) async {
-    final ctrl = TextEditingController();
-    final pin = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Configurar PIN'),
-        content: TextField(
-          controller: ctrl,
-          keyboardType: TextInputType.number,
-          maxLength: 4,
-          obscureText: true,
-          decoration: const InputDecoration(hintText: '4 dígitos'),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancelar'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, ctrl.text),
-            child: const Text('Guardar'),
-          ),
-        ],
-      ),
-    );
-    if (pin != null && pin.length == 4) {
-      await state.setPin(pin);
-    }
   }
 }
 

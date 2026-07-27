@@ -1,3 +1,5 @@
+import '../utils/period.dart';
+
 /// Objetivo financeiro (ex: Fondo de emergencia). O usuário informa apenas
 /// o valor objetivo e o prazo; o app calcula automaticamente a meta mensal
 /// necessária, recalculando os meses restantes sempre que o aporte de um
@@ -68,6 +70,12 @@ class InvestmentGoal {
   /// Lista de meses (mensal, a partir de [startDate] até [targetDate]) para
   /// os quais o aporte mensal deve ser adicionado automaticamente ao
   /// planejamento — mesma lógica das parcelas de Deudas.
+  ///
+  /// BUGFIX (ver comentário equivalente em [Debt.installmentDates]): limita
+  /// o dia ao último dia válido do mês de destino, evitando que
+  /// `DateTime(y, mm, startDate.day)` "vaze" para o mês seguinte quando
+  /// [startDate.day] não existe nesse mês — causa raiz dos "vencimentos
+  /// fantasma" (itens de planejamento aparecendo no mês/dia errado).
   List<DateTime> contributionDates() {
     if (targetDate == null) return [startDate];
     final months =
@@ -79,7 +87,7 @@ class InvestmentGoal {
       final m = startDate.month + i;
       final y = startDate.year + (m - 1) ~/ 12;
       final mm = ((m - 1) % 12) + 1;
-      return DateTime(y, mm, startDate.day);
+      return safeMonthDate(y, mm, startDate.day);
     });
   }
 

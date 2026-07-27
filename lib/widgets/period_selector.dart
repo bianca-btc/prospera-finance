@@ -16,16 +16,61 @@ import '../utils/period.dart';
 class PeriodSelector extends StatelessWidget {
   final bool inline;
   final bool compactHeader;
+  final bool appBar;
   const PeriodSelector({
     super.key,
     this.inline = false,
     this.compactHeader = false,
+    this.appBar = false,
   });
 
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
     final range = state.selectedRange;
+
+    if (appBar) {
+      // Versão reduzida horizontal, pensada para viver na AppBar (primeira
+      // linha da tela), à esquerda do ícone de configurações — usada de
+      // forma IDÊNTICA em todas as pestañas (Resumen/Transacciones/
+      // Planificación/Análisis), já que a AppBar é compartilhada.
+      return InkWell(
+        borderRadius: BorderRadius.circular(9),
+        onTap: () => _openPeriodSheet(context, state),
+        child: Container(
+          height: 32,
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          decoration: BoxDecoration(
+            border: Border.all(color: AppColors.darkBorder),
+            borderRadius: BorderRadius.circular(9),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(
+                Icons.calendar_month_rounded,
+                size: 13,
+                color: AppColors.brandAmber,
+              ),
+              const SizedBox(width: 4),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 74),
+                child: Text(
+                  periodRangeShortLabel(range),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              const Icon(Icons.keyboard_arrow_down_rounded, size: 14),
+            ],
+          ),
+        ),
+      );
+    }
 
     if (compactHeader) {
       // Versão estreita, pensada para compartilhar a mesma fila dos 3

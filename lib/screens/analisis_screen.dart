@@ -11,14 +11,15 @@ import '../utils/formatters.dart';
 import '../utils/period.dart';
 import '../widgets/common.dart';
 import '../widgets/filter_bar.dart';
-import '../widgets/period_selector.dart';
 
 /// Filtro de tipo de movimiento para los gráficos de esta pantalla — mismo
 /// patrón visual de "chips" ya usado en Transações/Planificación, pero
 /// coloreado según el color semántico de cada [TxType] (en vez de un único
 /// color de acento), lo que refuerza la identidad visual de Análisis frente
 /// a esas otras dos pestañas sin romper la paleta general del app.
-enum _AnalisisFilter { gastos, ingresos, inversiones, deudas, todos }
+/// Ordem fixa do toggle, idêntica em Transacciones/Planificación/Análisis:
+/// Todos, Ingresos, Gastos, Objetivos, Deudas.
+enum _AnalisisFilter { todos, ingresos, gastos, objetivos, deudas }
 
 /// Aba Análisis: responde las preguntas "¿Dónde gasto/recibo/invierto más?"
 /// y su equivalente por país, con un filtro de tipo de movimiento y un
@@ -32,20 +33,28 @@ class AnalisisScreen extends StatefulWidget {
 }
 
 class _AnalisisScreenState extends State<AnalisisScreen> {
-  _AnalisisFilter _filter = _AnalisisFilter.gastos;
+  _AnalisisFilter _filter = _AnalisisFilter.todos;
 
-  // ------- Filtros avançados (categoria/subcategoria/país) -------
-  String? _advCategory;
-  String? _advSubcategory;
-  String? _advCountry;
+  // ------- Filtros avançados (ámbito/categoria/subcategoria/país) -------
+  // Mesma estrutura/ordem/nomes usados em Transações e Planificación, para
+  // manter os 3 painéis de filtros avançados 100% padronizados. Seleção
+  // múltipla: Set vazio = "sem filtro" nessa dimensão.
+  final Set<String> _advScope = {};
+  final Set<String> _advCategory = {};
+  final Set<String> _advSubcategory = {};
+  final Set<String> _advCountry = {};
 
   bool get _hasAdvancedFilters =>
-      _advCategory != null || _advSubcategory != null || _advCountry != null;
+      _advScope.isNotEmpty ||
+      _advCategory.isNotEmpty ||
+      _advSubcategory.isNotEmpty ||
+      _advCountry.isNotEmpty;
 
   void _clearAdvancedFilters() {
-    _advCategory = null;
-    _advSubcategory = null;
-    _advCountry = null;
+    _advScope.clear();
+    _advCategory.clear();
+    _advSubcategory.clear();
+    _advCountry.clear();
   }
 
   /// Painel de "filtros avançados" — segue exatamente o mesmo padrão visual
@@ -62,16 +71,41 @@ class _AnalisisScreenState extends State<AnalisisScreen> {
       builder: (ctx, setModalState) {
         return StatefulBuilder(
           builder: (ctx, localSet) {
-            final subOptions = _advCategory == null
-                ? <String>[]
-                : (categories
-                          .where((c) => c.name == _advCategory)
-                          .map((c) => c.subcategories)
-                          .firstOrNull ??
-                      const <String>[]);
+            final subOptions = _advCategory.isEmpty
+                ? <String>{}
+                : categories
+                      .where((c) => _advCategory.contains(c.name))
+                      .expand((c) => c.subcategories)
+                      .toSet();
             return Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                const AdvancedFilterLabel('Ámbito'),
+                Wrap(
+                  spacing: AppSpacing.sm,
+                  runSpacing: AppSpacing.sm,
+                  children: [
+                    ChoiceChip(
+                      label: const Text('Todos'),
+                      selected: _advScope.isEmpty,
+                      onSelected: (_) {
+                        setState(_advScope.clear);
+                        localSet(() {});
+                      },
+                    ),
+                    for (final v in const ['Personal', 'Empresa'])
+                      FilterChip(
+                        label: Text(v),
+                        selected: _advScope.contains(v),
+                        onSelected: (sel) {
+                          setState(
+                            () => sel ? _advScope.add(v) : _advScope.remove(v),
+                          );
+                          localSet(() {});
+                        },
+                      ),
+                  ],
+                ),
                 const AdvancedFilterLabel('Categoría'),
                 Wrap(
                   spacing: AppSpacing.sm,
@@ -79,23 +113,29 @@ class _AnalisisScreenState extends State<AnalisisScreen> {
                   children: [
                     ChoiceChip(
                       label: const Text('Todas'),
-                      selected: _advCategory == null,
+                      selected: _advCategory.isEmpty,
                       onSelected: (_) {
                         setState(() {
-                          _advCategory = null;
-                          _advSubcategory = null;
+                          _advCategory.clear();
+                          _advSubcategory.clear();
                         });
                         localSet(() {});
                       },
                     ),
                     ...categories.map(
-                      (c) => ChoiceChip(
+                      (c) => FilterChip(
                         label: Text(c.name),
-                        selected: _advCategory == c.name,
-                        onSelected: (_) {
+                        selected: _advCategory.contains(c.name),
+                        onSelected: (sel) {
                           setState(() {
-                            _advCategory = c.name;
-                            _advSubcategory = null;
+                            if (sel) {
+                              _advCategory.add(c.name);
+                            } else {
+                              _advCategory.remove(c.name);
+                              _advSubcategory.removeWhere(
+                                (s) => c.subcategories.contains(s),
+                              );
+                            }
                           });
                           localSet(() {});
                         },
@@ -111,18 +151,22 @@ class _AnalisisScreenState extends State<AnalisisScreen> {
                     children: [
                       ChoiceChip(
                         label: const Text('Todas'),
-                        selected: _advSubcategory == null,
+                        selected: _advSubcategory.isEmpty,
                         onSelected: (_) {
-                          setState(() => _advSubcategory = null);
+                          setState(_advSubcategory.clear);
                           localSet(() {});
                         },
                       ),
                       ...subOptions.map(
-                        (s) => ChoiceChip(
+                        (s) => FilterChip(
                           label: Text(s),
-                          selected: _advSubcategory == s,
-                          onSelected: (_) {
-                            setState(() => _advSubcategory = s);
+                          selected: _advSubcategory.contains(s),
+                          onSelected: (sel) {
+                            setState(
+                              () => sel
+                                  ? _advSubcategory.add(s)
+                                  : _advSubcategory.remove(s),
+                            );
                             localSet(() {});
                           },
                         ),
@@ -137,18 +181,22 @@ class _AnalisisScreenState extends State<AnalisisScreen> {
                   children: [
                     ChoiceChip(
                       label: const Text('Todos'),
-                      selected: _advCountry == null,
+                      selected: _advCountry.isEmpty,
                       onSelected: (_) {
-                        setState(() => _advCountry = null);
+                        setState(_advCountry.clear);
                         localSet(() {});
                       },
                     ),
                     ...countries.map(
-                      (c) => ChoiceChip(
+                      (c) => FilterChip(
                         label: Text(c),
-                        selected: _advCountry == c,
-                        onSelected: (_) {
-                          setState(() => _advCountry = c);
+                        selected: _advCountry.contains(c),
+                        onSelected: (sel) {
+                          setState(
+                            () => sel
+                                ? _advCountry.add(c)
+                                : _advCountry.remove(c),
+                          );
                           localSet(() {});
                         },
                       ),
@@ -174,16 +222,18 @@ class _AnalisisScreenState extends State<AnalisisScreen> {
     Color(0xFFEC407A),
   ];
 
-  /// Conjunto de tipos incluidos por cada opción del filtro. "Gastos"
-  /// mantiene el comportamiento original de la pantalla (gasto + cuota de
-  /// deuda contados juntos), evitando romper el análisis por defecto.
+  /// Conjunto de tipos incluidos por cada opción del filtro. "Gastos" ahora
+  /// muestra SOLO TxType.gasto (separado de Deudas), igual que en
+  /// Transacciones — cada tipo de movimiento tiene su propia opción
+  /// dedicada (Objetivos = inversión, Deudas = deuda), sin agrupaciones
+  /// implícitas, para mantener la consistencia exigida entre pantallas.
   Set<TxType> get _typesForFilter {
     switch (_filter) {
       case _AnalisisFilter.gastos:
-        return {TxType.gasto, TxType.deuda};
+        return {TxType.gasto};
       case _AnalisisFilter.ingresos:
         return {TxType.ingreso};
-      case _AnalisisFilter.inversiones:
+      case _AnalisisFilter.objetivos:
         return {TxType.inversion};
       case _AnalisisFilter.deudas:
         return {TxType.deuda};
@@ -198,7 +248,7 @@ class _AnalisisScreenState extends State<AnalisisScreen> {
         return '¿Dónde gasto más?';
       case _AnalisisFilter.ingresos:
         return '¿De dónde viene tu dinero?';
-      case _AnalisisFilter.inversiones:
+      case _AnalisisFilter.objetivos:
         return '¿Dónde inviertes más?';
       case _AnalisisFilter.deudas:
         return '¿Cuáles son tus mayores deudas?';
@@ -213,7 +263,7 @@ class _AnalisisScreenState extends State<AnalisisScreen> {
         return '¿Dónde gasto más por país?';
       case _AnalisisFilter.ingresos:
         return '¿De dónde viene tu dinero por país?';
-      case _AnalisisFilter.inversiones:
+      case _AnalisisFilter.objetivos:
         return '¿Dónde inviertes más por país?';
       case _AnalisisFilter.deudas:
         return '¿Dónde tienes más deudas por país?';
@@ -233,11 +283,19 @@ class _AnalisisScreenState extends State<AnalisisScreen> {
         .toList();
     if (_hasAdvancedFilters) {
       txns = txns.where((t) {
-        if (_advCategory != null && t.category != _advCategory) return false;
-        if (_advSubcategory != null && t.subcategory != _advSubcategory) {
+        if (_advScope.isNotEmpty && !_advScope.contains(t.scope)) {
           return false;
         }
-        if (_advCountry != null && t.country != _advCountry) return false;
+        if (_advCategory.isNotEmpty && !_advCategory.contains(t.category)) {
+          return false;
+        }
+        if (_advSubcategory.isNotEmpty &&
+            !_advSubcategory.contains(t.subcategory)) {
+          return false;
+        }
+        if (_advCountry.isNotEmpty && !_advCountry.contains(t.country)) {
+          return false;
+        }
         return true;
       }).toList();
     }
@@ -262,7 +320,6 @@ class _AnalisisScreenState extends State<AnalisisScreen> {
     }
     final sortedCats = byCategory.entries.toList()
       ..sort((a, b) => b.value.compareTo(a.value));
-    final totalGastos = byCategory.values.fold(0.0, (s, v) => s + v);
 
     // Gráfico 2: gastos por categoría y país.
     final Map<String, Map<String, double>> byCategoryCountry = {};
@@ -287,15 +344,14 @@ class _AnalisisScreenState extends State<AnalisisScreen> {
           title: 'Análisis',
           subtitle:
               'Comprende tus patrones financieros y toma mejores decisiones.',
-          trailing: const PeriodSelector(inline: true),
         ),
         SegmentedFilterBar<_AnalisisFilter>(
           options: const [
-            FilterOption(_AnalisisFilter.gastos, 'Gastos'),
-            FilterOption(_AnalisisFilter.ingresos, 'Ingresos'),
-            FilterOption(_AnalisisFilter.inversiones, 'Inversiones'),
-            FilterOption(_AnalisisFilter.deudas, 'Deudas'),
             FilterOption(_AnalisisFilter.todos, 'Todos'),
+            FilterOption(_AnalisisFilter.ingresos, 'Ingresos'),
+            FilterOption(_AnalisisFilter.gastos, 'Gastos'),
+            FilterOption(_AnalisisFilter.objetivos, 'Objetivos'),
+            FilterOption(_AnalisisFilter.deudas, 'Deudas'),
           ],
           selected: _filter,
           onChanged: (f) => setState(() => _filter = f),
@@ -312,126 +368,75 @@ class _AnalisisScreenState extends State<AnalisisScreen> {
                 )
               : Column(
                   children: [
-                    // Gráfico de barras (valores absolutos por categoría) y
-                    // gráfico de pizza (mismos datos en %) lado a lado, para
-                    // comparar magnitud y proporción de un solo vistazo.
-                    IntrinsicHeight(
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(
-                            flex: 3,
-                            child: SizedBox(
-                              height: 190,
-                              child: BarChart(
-                                BarChartData(
-                                  alignment: BarChartAlignment.spaceAround,
-                                  maxY: (sortedCats.isEmpty
-                                      ? 10
-                                      : sortedCats.first.value * 1.2 + 5),
-                                  barTouchData: BarTouchData(enabled: true),
-                                  titlesData: FlTitlesData(
-                                    leftTitles: const AxisTitles(
-                                      sideTitles: SideTitles(
-                                        showTitles: true,
-                                        reservedSize: 34,
-                                      ),
+                    // Gráfico de barras con los valores absolutos por
+                    // categoría (el gráfico de pizza fue eliminado a
+                    // pedido del usuario).
+                    SizedBox(
+                      height: 190,
+                      child: BarChart(
+                        BarChartData(
+                          alignment: BarChartAlignment.spaceAround,
+                          maxY: (sortedCats.isEmpty
+                              ? 10
+                              : sortedCats.first.value * 1.2 + 5),
+                          barTouchData: BarTouchData(enabled: true),
+                          titlesData: FlTitlesData(
+                            leftTitles: const AxisTitles(
+                              sideTitles: SideTitles(
+                                showTitles: true,
+                                reservedSize: 34,
+                              ),
+                            ),
+                            rightTitles: const AxisTitles(
+                              sideTitles: SideTitles(showTitles: false),
+                            ),
+                            topTitles: const AxisTitles(
+                              sideTitles: SideTitles(showTitles: false),
+                            ),
+                            bottomTitles: AxisTitles(
+                              sideTitles: SideTitles(
+                                showTitles: true,
+                                reservedSize: 28,
+                                getTitlesWidget: (value, meta) {
+                                  final idx = value.toInt();
+                                  if (idx < 0 || idx >= sortedCats.length) {
+                                    return const SizedBox.shrink();
+                                  }
+                                  final name = sortedCats[idx].key;
+                                  final short = name.length > 6
+                                      ? '${name.substring(0, 6)}…'
+                                      : name;
+                                  return Padding(
+                                    padding: const EdgeInsets.only(top: 6),
+                                    child: Text(
+                                      short,
+                                      style: const TextStyle(fontSize: 8.5),
                                     ),
-                                    rightTitles: const AxisTitles(
-                                      sideTitles: SideTitles(showTitles: false),
-                                    ),
-                                    topTitles: const AxisTitles(
-                                      sideTitles: SideTitles(showTitles: false),
-                                    ),
-                                    bottomTitles: AxisTitles(
-                                      sideTitles: SideTitles(
-                                        showTitles: true,
-                                        reservedSize: 28,
-                                        getTitlesWidget: (value, meta) {
-                                          final idx = value.toInt();
-                                          if (idx < 0 ||
-                                              idx >= sortedCats.length) {
-                                            return const SizedBox.shrink();
-                                          }
-                                          final name = sortedCats[idx].key;
-                                          final short = name.length > 6
-                                              ? '${name.substring(0, 6)}…'
-                                              : name;
-                                          return Padding(
-                                            padding: const EdgeInsets.only(
-                                              top: 6,
-                                            ),
-                                            child: Text(
-                                              short,
-                                              style: const TextStyle(
-                                                fontSize: 8.5,
-                                              ),
-                                            ),
-                                          );
-                                        },
-                                      ),
-                                    ),
-                                  ),
-                                  gridData: const FlGridData(
-                                    show: true,
-                                    drawVerticalLine: false,
-                                  ),
-                                  borderData: FlBorderData(show: false),
-                                  barGroups: List.generate(sortedCats.length, (
-                                    i,
-                                  ) {
-                                    final e = sortedCats[i];
-                                    return BarChartGroupData(
-                                      x: i,
-                                      barRods: [
-                                        BarChartRodData(
-                                          toY: e.value,
-                                          color: _palette[i % _palette.length],
-                                          width: 14,
-                                          borderRadius: BorderRadius.circular(
-                                            3,
-                                          ),
-                                        ),
-                                      ],
-                                    );
-                                  }),
-                                ),
+                                  );
+                                },
                               ),
                             ),
                           ),
-                          const SizedBox(width: AppSpacing.sm),
-                          Expanded(
-                            flex: 2,
-                            child: SizedBox(
-                              height: 160,
-                              child: PieChart(
-                                PieChartData(
-                                  sectionsSpace: 2,
-                                  centerSpaceRadius: 30,
-                                  sections: List.generate(sortedCats.length, (
-                                    i,
-                                  ) {
-                                    final e = sortedCats[i];
-                                    final pct = totalGastos <= 0
-                                        ? 0
-                                        : (e.value / totalGastos * 100);
-                                    return PieChartSectionData(
-                                      value: e.value,
-                                      color: _palette[i % _palette.length],
-                                      title: '${pct.toStringAsFixed(0)}%',
-                                      radius: 46,
-                                      titleStyle: const TextStyle(
-                                        fontSize: 9.5,
-                                        fontWeight: FontWeight.w700,
-                                        color: Colors.white,
-                                      ),
-                                    );
-                                  }),
-                                ),
-                              ),
-                            ),
+                          gridData: const FlGridData(
+                            show: true,
+                            drawVerticalLine: false,
                           ),
-                        ],
+                          borderData: FlBorderData(show: false),
+                          barGroups: List.generate(sortedCats.length, (i) {
+                            final e = sortedCats[i];
+                            return BarChartGroupData(
+                              x: i,
+                              barRods: [
+                                BarChartRodData(
+                                  toY: e.value,
+                                  color: _palette[i % _palette.length],
+                                  width: 14,
+                                  borderRadius: BorderRadius.circular(3),
+                                ),
+                              ],
+                            );
+                          }),
+                        ),
                       ),
                     ),
                     const SizedBox(height: AppSpacing.md),
@@ -581,6 +586,278 @@ class _AnalisisScreenState extends State<AnalisisScreen> {
             byCategory: byCategoryResumen,
           ),
         ),
+        const SizedBox(height: AppSpacing.xl),
+        SectionTitle(title: 'Tabla dinámica'),
+        _PivotTableSection(range: range),
+      ],
+    );
+  }
+}
+
+/// ---------------------------------------------------------------------
+/// Tabla Dinámica (estilo Excel Pivot Table), con niveles expandibles:
+/// Receitas/Despesas -> Categoría -> Subcategoría -> Total, seguido de
+/// subtotales por categoría, subtotal de Receitas, subtotal de Despesas
+/// (Gasto+Deuda+Aportes a objetivos) y Saldo Final (Receitas - Despesas).
+/// Respeta el período seleccionado (mismo [range] usado en el resto de la
+/// pantalla), pero es independiente del filtro de tipo/avanzado de arriba
+/// (siempre muestra ambos lados: Receitas y Despesas). Sigue la misma
+/// fórmula que el Saldo Disponible global: los aportes a objetivos de
+/// inversión se tratan como salida (Despesas); los rescates no se incluyen
+/// (no forman parte de la fórmula del saldo).
+/// ---------------------------------------------------------------------
+class _PivotNode {
+  final String label;
+  double total = 0;
+  final Map<String, _PivotNode> children = {};
+
+  _PivotNode(this.label);
+
+  _PivotNode child(String key) => children.putIfAbsent(key, () => _PivotNode(key));
+}
+
+class _PivotTableSection extends StatefulWidget {
+  final PeriodRange range;
+  const _PivotTableSection({required this.range});
+
+  @override
+  State<_PivotTableSection> createState() => _PivotTableSectionState();
+}
+
+class _PivotTableSectionState extends State<_PivotTableSection> {
+  final Set<String> _expanded = {};
+
+  void _toggle(String key) {
+    setState(() {
+      if (_expanded.contains(key)) {
+        _expanded.remove(key);
+      } else {
+        _expanded.add(key);
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final state = context.watch<AppState>();
+    final txns = state.txnsForRange(widget.range);
+    final goalById = {for (final g in state.goals) g.id: g};
+
+    final receitas = _PivotNode('Receitas');
+    final despesas = _PivotNode('Despesas');
+    for (final t in txns) {
+      if (t.isPending) continue;
+      final _PivotNode root;
+      final bool isAporteObjetivo;
+      if (t.type == TxType.ingreso) {
+        root = receitas;
+        isAporteObjetivo = false;
+      } else if (t.type == TxType.gasto || t.type == TxType.deuda) {
+        root = despesas;
+        isAporteObjetivo = false;
+      } else if (t.type == TxType.inversion && !t.isWithdrawal) {
+        // Aporte a objetivo de inversión: se trata como salida (Despesas),
+        // igual que en el Saldo Disponible global y en el Balance de
+        // Transacciones.
+        root = despesas;
+        isAporteObjetivo = true;
+      } else {
+        // Rescate de inversión: no forma parte de la fórmula del saldo
+        // (ni como entrada ni como salida) — sigue el mismo criterio ya
+        // usado en el resto de la app.
+        continue;
+      }
+      root.total += t.amount;
+      final catNode = root.child(t.category);
+      catNode.total += t.amount;
+      final subName = t.subcategory.isNotEmpty ? t.subcategory : '(Sin subcategoría)';
+      final subNode = catNode.child(subName);
+      subNode.total += t.amount;
+      // Los aportes a objetivos se anidan en un nivel extra, claramente
+      // etiquetado con el nombre del objetivo — así queda explícito que
+      // esa porción del total de la subcategoría es un aporte a un
+      // objetivo (ahorro/inversión) y no un gasto real, aunque comparta
+      // la misma categoría/subcategoría del objetivo (ej.: Despesas ->
+      // Vivienda -> Terreno -> "Aporte objetivo: Fondo terreno"). Sin
+      // esto, un aporte y un gasto real con la misma categoría+
+      // subcategoría se mezclarían en un solo número sin distinción.
+      if (isAporteObjetivo) {
+        final goal = goalById[t.goalId];
+        final goalLabel = goal != null
+            ? 'Aporte objetivo: ${goal.name}'
+            : 'Aporte a objetivo';
+        final goalNode = subNode.child('◆ $goalLabel');
+        goalNode.total += t.amount;
+      }
+    }
+
+    final saldoFinal = receitas.total - despesas.total;
+
+    return SectionCard(
+      padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm, horizontal: AppSpacing.sm),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _PivotGroupRow(
+            node: receitas,
+            depth: 0,
+            path: 'Receitas',
+            color: AppColors.ingreso,
+            expanded: _expanded,
+            onToggle: _toggle,
+          ),
+          const Divider(height: AppSpacing.md),
+          _PivotGroupRow(
+            node: despesas,
+            depth: 0,
+            path: 'Despesas',
+            color: AppColors.gasto,
+            expanded: _expanded,
+            onToggle: _toggle,
+          ),
+          const Divider(height: AppSpacing.lg, thickness: 1.4),
+          Padding(
+            padding: const EdgeInsets.symmetric(
+              vertical: AppSpacing.sm,
+              horizontal: AppSpacing.sm,
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text(
+                  'Saldo Final',
+                  style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14),
+                ),
+                Text(
+                  formatUsd(saldoFinal, decimals: false),
+                  style: TextStyle(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 14,
+                    color: saldoFinal >= 0 ? AppColors.ingreso : AppColors.gasto,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Fila expandible de un nivel de la tabla dinámica (Receitas/Despesas,
+/// Categoría o Subcategoría) — llamada recursivamente para renderizar
+/// jerarquías de profundidad arbitraria, aunque en este caso siempre son
+/// exactamente 3 niveles (grupo -> categoría -> subcategoría).
+class _PivotGroupRow extends StatelessWidget {
+  final _PivotNode node;
+  final int depth;
+  final String path;
+  final Color color;
+  final Set<String> expanded;
+  final void Function(String key) onToggle;
+
+  const _PivotGroupRow({
+    required this.node,
+    required this.depth,
+    required this.path,
+    required this.color,
+    required this.expanded,
+    required this.onToggle,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final hasChildren = node.children.isNotEmpty;
+    final isOpen = expanded.contains(path);
+    final sortedChildren = node.children.entries.toList()
+      ..sort((a, b) => b.value.total.compareTo(a.value.total));
+
+    // Linha de "Aporte a objetivo" — marcada com o prefixo "◆" ao ser
+    // gerada em [_PivotTableSectionState.build] — recebe destaque visual
+    // (color de inversión) para deixar claro que esse valor é um aporte
+    // de ahorro/inversión, e não un gasto real, mesmo estando dentro de
+    // la misma categoría/subcategoría.
+    final isAporteRow = node.label.startsWith('◆ ');
+    final displayLabel = isAporteRow ? node.label.substring(2) : node.label;
+    final rowColor = isAporteRow ? AppColors.inversion : color;
+
+    final fontSize = depth == 0 ? 14.0 : (depth == 1 ? 13.0 : 12.5);
+    final fontWeight = depth == 0
+        ? FontWeight.w800
+        : (depth == 1 ? FontWeight.w700 : FontWeight.w500);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        InkWell(
+          onTap: hasChildren ? () => onToggle(path) : null,
+          borderRadius: BorderRadius.circular(8),
+          child: Container(
+            decoration: isAporteRow
+                ? BoxDecoration(
+                    color: AppColors.inversion.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(8),
+                  )
+                : null,
+            padding: EdgeInsets.only(
+              left: AppSpacing.sm + depth * AppSpacing.lg,
+              right: AppSpacing.sm,
+              top: 8,
+              bottom: 8,
+            ),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 20,
+                  child: hasChildren
+                      ? Icon(
+                          isOpen
+                              ? Icons.keyboard_arrow_down_rounded
+                              : Icons.keyboard_arrow_right_rounded,
+                          size: 18,
+                          color: rowColor,
+                        )
+                      : isAporteRow
+                      ? Icon(Icons.savings_rounded, size: 14, color: rowColor)
+                      : const SizedBox.shrink(),
+                ),
+                Expanded(
+                  child: Text(
+                    displayLabel,
+                    style: TextStyle(
+                      fontSize: fontSize,
+                      fontWeight: fontWeight,
+                      color: isAporteRow ? rowColor : null,
+                      fontStyle: isAporteRow ? FontStyle.italic : null,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                Text(
+                  formatUsd(node.total, decimals: false),
+                  style: TextStyle(
+                    fontSize: fontSize,
+                    fontWeight: fontWeight,
+                    color: depth == 0 ? color : (isAporteRow ? rowColor : null),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        if (hasChildren && isOpen)
+          ...sortedChildren.map(
+            (e) => _PivotGroupRow(
+              node: e.value,
+              depth: depth + 1,
+              path: '$path/${e.key}',
+              color: color,
+              expanded: expanded,
+              onToggle: onToggle,
+            ),
+          ),
       ],
     );
   }
