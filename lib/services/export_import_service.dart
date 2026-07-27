@@ -28,7 +28,6 @@ class ExportImportService {
         'fecha',
         'pais',
         'estado',
-        'metodo',
         'descripcion',
       ]),
     ];
@@ -43,7 +42,6 @@ class ExportImportService {
           t.date.toIso8601String().split('T').first,
           t.country,
           t.status.name,
-          t.method.name,
           t.description,
         ]),
       );

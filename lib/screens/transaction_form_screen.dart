@@ -11,7 +11,7 @@ import '../theme/app_theme.dart';
 import '../utils/formatters.dart';
 import '../utils/period.dart';
 import '../widgets/manage_lists_dialogs.dart';
-import 'budget_form_screen.dart';
+import 'plan_form_screen.dart';
 
 const _uuid = Uuid();
 
@@ -40,7 +40,6 @@ class _TransactionFormScreenState extends State<TransactionFormScreen> {
   late String _country;
   final _amountCtrl = TextEditingController();
   late DateTime _date;
-  late PaymentMethod _method;
   final _descCtrl = TextEditingController();
   String? _scope;
   bool _moreOptions = false;
@@ -55,7 +54,6 @@ class _TransactionFormScreenState extends State<TransactionFormScreen> {
     _country = t?.country ?? '';
     _amountCtrl.text = t != null ? t.amount.toStringAsFixed(2) : '';
     _date = t?.date ?? DateTime.now();
-    _method = t?.method ?? PaymentMethod.efectivo;
     _descCtrl.text = t?.description ?? '';
     _scope = t?.scope;
     _selectedBudgetId = t?.budgetItemId;
@@ -246,7 +244,8 @@ class _TransactionFormScreenState extends State<TransactionFormScreen> {
     if (wantsCreate == true && mounted) {
       final created = await Navigator.of(context).push<BudgetItem>(
         MaterialPageRoute(
-          builder: (_) => BudgetFormScreen(
+          builder: (_) => PlanFormScreen(
+            initialKind: PlanKind.gasto,
             initialMonth: _date.month,
             initialYear: _date.year,
             initialCategory: _category,
@@ -325,7 +324,6 @@ class _TransactionFormScreenState extends State<TransactionFormScreen> {
       subcategory: _subcategory ?? '',
       amount: amount,
       date: _date,
-      method: _method,
       description: _descCtrl.text.trim(),
       isPending: amount == 0,
       scope: _scope,
@@ -363,10 +361,14 @@ class _TransactionFormScreenState extends State<TransactionFormScreen> {
         .where((b) => !b.isDebtInstallment && !b.isGoalContribution)
         .toList();
 
+    final canEditType = widget.existing == null ||
+        widget.existing!.type == TxType.ingreso ||
+        widget.existing!.type == TxType.gasto;
+
     return Scaffold(
       appBar: AppBar(
         title: Text(
-          widget.existing != null ? 'Editar transacción' : 'Nueva transacción',
+          widget.existing != null ? 'Editar transação' : 'Nova transação',
         ),
       ),
       body: Form(
@@ -374,32 +376,100 @@ class _TransactionFormScreenState extends State<TransactionFormScreen> {
         child: ListView(
           padding: const EdgeInsets.all(AppSpacing.lg),
           children: [
-            // ------- Campo 1: Plan de Planificación (primero, según D) -------
-            // Oculto para movimientos auto-generados (Aporte/Rescate/Pago):
-            // su vínculo con la planificación se gestiona únicamente desde
-            // dentro de esa planificación, nunca desde aquí.
-            if (!_isLockedType) ...[
-              const Text(
-                'Plan de planificación',
-                style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+            // ------- Toggle de 2 segmentos: Ingresso / Gasto -------
+            if (canEditType)
+              Row(
+                children: [
+                  Expanded(
+                    child: _TxTypeSegment(
+                      label: 'Ingresso',
+                      icon: Icons.south_west_rounded,
+                      color: AppColors.ingreso,
+                      selected: _type == TxType.ingreso,
+                      onTap: () => setState(() {
+                        _type = TxType.ingreso;
+                        _category = null;
+                        _subcategory = null;
+                        _selectedBudgetId = null;
+                      }),
+                    ),
+                  ),
+                  const SizedBox(width: AppSpacing.sm),
+                  Expanded(
+                    child: _TxTypeSegment(
+                      label: 'Gasto',
+                      icon: Icons.north_east_rounded,
+                      color: AppColors.gasto,
+                      selected: _type == TxType.gasto,
+                      onTap: () => setState(() {
+                        _type = TxType.gasto;
+                        _category = null;
+                        _subcategory = null;
+                        _selectedBudgetId = null;
+                      }),
+                    ),
+                  ),
+                ],
+              )
+            else
+              Container(
+                padding: const EdgeInsets.all(AppSpacing.md),
+                decoration: BoxDecoration(
+                  color: AppColors.inversion.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: AppColors.inversion.withValues(alpha: 0.3),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.link_rounded,
+                      size: 18,
+                      color: AppColors.inversion,
+                    ),
+                    const SizedBox(width: AppSpacing.sm),
+                    Expanded(
+                      child: Text(
+                        'Este movimiento (${widget.existing!.movementTypeLabel}) está '
+                        'vinculado automáticamente a su planificación y no puede '
+                        'reasignarse aquí.',
+                        style: const TextStyle(
+                          fontSize: 12.5,
+                          color: AppColors.inversion,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
               ),
-              const SizedBox(height: AppSpacing.sm),
+            const SizedBox(height: AppSpacing.lg),
+
+            // ------- Plan de planificación -------
+            // Não faz parte do mockup original, mas é adicionado
+            // explicitamente para que toda transação possa vincular-se a um
+            // plano já existente (autocompleta os demais campos). Oculto
+            // para movimentos auto-generados (Aporte/Rescate/Pago), cujo
+            // vínculo é gerenciado apenas dentro da própria planificación,
+            // e também para Ingresos: entradas de dinheiro não precisam
+            // (nem podem) ser vinculadas a um plano de planejamento.
+            if (canEditType && _type != TxType.ingreso) ...[
               DropdownButtonFormField<String>(
                 initialValue:
                     availablePlans.any((b) => b.id == _selectedBudgetId)
                         ? _selectedBudgetId
                         : null,
                 decoration: const InputDecoration(
-                  labelText: '¿Ya planificaste esto?',
+                  labelText: 'Este gasto pertence a qual plano?',
                   helperText:
-                      'Selecciona un plan existente para autocompletar los '
-                      'demás campos, o déjalo en blanco si es nuevo.',
+                      'Selecione um plano deste período para autocompletar '
+                      'os demais campos, ou deixe em branco se for novo.',
                   helperMaxLines: 2,
                 ),
                 items: [
                   const DropdownMenuItem<String>(
                     value: null,
-                    child: Text('— Fuera de un plan / nuevo —'),
+                    child: Text('— Fora de um plano / novo —'),
                   ),
                   ...availablePlans.map(
                     (b) => DropdownMenuItem<String>(
@@ -419,289 +489,240 @@ class _TransactionFormScreenState extends State<TransactionFormScreen> {
                 },
               ),
               const SizedBox(height: AppSpacing.lg),
-            ] else ...[
-              Container(
-                padding: const EdgeInsets.all(AppSpacing.md),
-                decoration: BoxDecoration(
-                  color: AppColors.inversion.withValues(alpha: 0.08),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                    color: AppColors.inversion.withValues(alpha: 0.3),
-                  ),
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      Icons.link_rounded,
-                      size: 18,
-                      color: AppColors.inversion,
-                    ),
-                    const SizedBox(width: AppSpacing.sm),
-                    Expanded(
-                      child: Text(
-                        'Este movimiento está vinculado automáticamente a su '
-                        'planificación y no puede reasignarse aquí.',
-                        style: TextStyle(fontSize: 12.5, color: AppColors.inversion),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: AppSpacing.lg),
             ],
 
-            // ------- Campos obligatorios -------
-            const Text(
-              'Tipo',
-              style: TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            Wrap(
-              spacing: AppSpacing.sm,
-              // Nueva Transacción solo admite Ingreso/Gasto — los
-              // movimientos de Inversión (Aporte/Rescate) y Deuda (Pago)
-              // se generan siempre desde dentro de su propia
-              // planificación, nunca aquí. Si se está EDITANDO un
-              // movimiento auto-generado (tipo inversión/deuda), se
-              // muestra ese chip también pero sin permitir cambiar HACIA
-              // esos tipos desde una transacción nueva.
-              children: {
-                TxType.ingreso,
-                TxType.gasto,
-                if (widget.existing != null) widget.existing!.type,
-              }.map((t) {
-                final selected = _type == t;
-                final isEditableType =
-                    t == TxType.ingreso || t == TxType.gasto;
-                return ChoiceChip(
-                  label: Text(
-                    isEditableType ? t.label : widget.existing!.movementTypeLabel,
-                  ),
-                  selected: selected,
-                  onSelected: isEditableType
-                      ? (_) => setState(() {
-                          _type = t;
-                          _category = null;
-                          _subcategory = null;
-                          _selectedBudgetId = null;
-                        })
-                      : null,
-                );
-              }).toList(),
-            ),
-            if (widget.existing != null &&
-                widget.existing!.type != TxType.ingreso &&
-                widget.existing!.type != TxType.gasto) ...[
-              const SizedBox(height: AppSpacing.sm),
-              Text(
-                'Este movimiento fue generado automáticamente desde su '
-                'planificación y no puede cambiar de tipo aquí.',
-                style: TextStyle(
-                  fontSize: 11.5,
-                  color: Theme.of(context).textTheme.bodySmall?.color,
-                ),
-              ),
-            ],
-            const SizedBox(height: AppSpacing.lg),
-            // Categoría y Subcategoría siempre adyacentes (F).
+            // ------- Row: Categoria + Data -------
             Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Expanded(
-                  child: DropdownButtonFormField<String>(
-                    initialValue: _category,
-                    decoration: const InputDecoration(labelText: 'Categoría'),
-                    items: cats
-                        .map(
-                          (c) => DropdownMenuItem(
-                            value: c.name,
-                            child: Text(c.isCustom ? c.name : '${c.name} *'),
-                          ),
-                        )
-                        .toList(),
-                    onChanged: (v) => setState(() {
-                      _category = v;
-                      _subcategory = null;
-                      _selectedBudgetId = null;
-                    }),
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.add_circle_outline_rounded),
-                  tooltip: 'Agregar categoría',
-                  onPressed: () async {
-                    final name = await showAddItemDialog(
-                      context,
-                      title: 'Nueva categoría',
-                    );
-                    if (name != null && name.isNotEmpty) {
-                      final cat = CategoryDef(
-                        name: name,
-                        subcategories: [],
-                        isCustom: true,
-                      );
-                      if (_type == TxType.ingreso) {
-                        await state.addIncomeCategory(cat);
-                      } else {
-                        await state.addExpenseCategory(cat);
-                      }
-                      setState(() => _category = name);
-                    }
-                  },
-                ),
-              ],
-            ),
-            const SizedBox(height: AppSpacing.md),
-            Row(
-              children: [
-                Expanded(
-                  child: DropdownButtonFormField<String>(
-                    initialValue: subOptions.contains(_subcategory)
-                        ? _subcategory
-                        : null,
-                    decoration: const InputDecoration(
-                      labelText: 'Subcategoría',
-                    ),
-                    items: subOptions
-                        .map(
-                          (s) => DropdownMenuItem(value: s, child: Text(s)),
-                        )
-                        .toList(),
-                    onChanged: (v) => setState(() {
-                      _subcategory = v;
-                      _selectedBudgetId = null;
-                    }),
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.add_circle_outline_rounded),
-                  tooltip: 'Agregar subcategoría',
-                  onPressed: _category == null
-                      ? null
-                      : () async {
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: DropdownButtonFormField<String>(
+                          initialValue: _category,
+                          decoration: const InputDecoration(labelText: 'Categoria'),
+                          items: cats
+                              .map(
+                                (c) => DropdownMenuItem(
+                                  value: c.name,
+                                  child: Text(
+                                    c.isCustom ? c.name : '${c.name} *',
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: (v) => setState(() {
+                            _category = v;
+                            _subcategory = null;
+                            _selectedBudgetId = null;
+                          }),
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.add_circle_outline_rounded),
+                        tooltip: 'Agregar categoría',
+                        onPressed: () async {
                           final name = await showAddItemDialog(
                             context,
-                            title: 'Nueva subcategoría',
+                            title: 'Nueva categoría',
                           );
                           if (name != null && name.isNotEmpty) {
-                            await state.addSubcategory(
-                              isExpense: _type != TxType.ingreso,
-                              category: _category!,
-                              subcategory: name,
+                            final cat = CategoryDef(
+                              name: name,
+                              subcategories: [],
+                              isCustom: true,
                             );
-                            setState(() => _subcategory = name);
+                            if (_type == TxType.ingreso) {
+                              await state.addIncomeCategory(cat);
+                            } else {
+                              await state.addExpenseCategory(cat);
+                            }
+                            setState(() => _category = name);
                           }
                         },
+                      ),
+                    ],
+                  ),
                 ),
-              ],
-            ),
-            const SizedBox(height: AppSpacing.md),
-            TextFormField(
-              controller: _amountCtrl,
-              keyboardType: const TextInputType.numberWithOptions(
-                decimal: true,
-              ),
-              decoration: const InputDecoration(
-                labelText: 'Valor (USD)',
-                prefixText: '\$ ',
-              ),
-              validator: (v) {
-                if (v == null || v.trim().isEmpty) return 'Ingresa un valor';
-                final n = double.tryParse(v.replaceAll(',', '.'));
-                if (n == null) return 'Valor inválido';
-                return null;
-              },
-            ),
-            const SizedBox(height: AppSpacing.md),
-            InkWell(
-              onTap: _pickDate,
-              child: InputDecorator(
-                decoration: const InputDecoration(labelText: 'Fecha'),
-                child: Row(
-                  children: [
-                    Text(formatFullDate(_date)),
-                    const Spacer(),
-                    const Icon(Icons.calendar_today_rounded, size: 18),
-                  ],
-                ),
-              ),
-            ),
-            const SizedBox(height: AppSpacing.md),
-            Row(
-              children: [
+                const SizedBox(width: AppSpacing.md),
                 Expanded(
-                  child: DropdownButtonFormField<String>(
-                    initialValue: state.countries.contains(_country)
-                        ? _country
-                        : null,
-                    decoration: const InputDecoration(labelText: 'País'),
-                    items: state.countries
-                        .map((c) => DropdownMenuItem(value: c, child: Text(c)))
-                        .toList(),
-                    onChanged: (v) => setState(() => _country = v!),
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.add_circle_outline_rounded),
-                  tooltip: 'Agregar país',
-                  onPressed: () async {
-                    final name = await showAddItemDialog(
-                      context,
-                      title: 'Nuevo país',
-                    );
-                    if (name != null && name.isNotEmpty) {
-                      await state.addCountry(name);
-                      setState(() => _country = name);
-                    }
-                  },
-                ),
-              ],
-            ),
-            const SizedBox(height: AppSpacing.md),
-            TextFormField(
-              controller: _descCtrl,
-              maxLines: 2,
-              decoration: const InputDecoration(
-                labelText: 'Descripción (opcional)',
-                alignLabelWithHint: true,
-              ),
-            ),
-            const SizedBox(height: AppSpacing.lg),
-
-            // ------- Más opciones (colapsable) -------
-            InkWell(
-              onTap: () => setState(() => _moreOptions = !_moreOptions),
-              child: Row(
-                children: [
-                  Icon(
-                    _moreOptions
-                        ? Icons.expand_less_rounded
-                        : Icons.expand_more_rounded,
-                    size: 20,
-                    color: Theme.of(context).textTheme.bodySmall?.color,
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    'Más opciones',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w600,
-                      fontSize: 13,
-                      color: Theme.of(context).textTheme.bodySmall?.color,
+                  child: InkWell(
+                    onTap: _pickDate,
+                    child: InputDecorator(
+                      decoration: const InputDecoration(labelText: 'Data'),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              formatFullDate(_date),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          const Icon(Icons.calendar_today_rounded, size: 18),
+                        ],
+                      ),
                     ),
                   ),
-                ],
-              ),
+                ),
+              ],
             ),
+            const SizedBox(height: AppSpacing.md),
+
+            // ------- Row: Subcategoria + País -------
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: DropdownButtonFormField<String>(
+                          initialValue: subOptions.contains(_subcategory)
+                              ? _subcategory
+                              : null,
+                          decoration: const InputDecoration(
+                            labelText: 'Subcategoria (opcional)',
+                          ),
+                          items: subOptions
+                              .map(
+                                (s) => DropdownMenuItem(value: s, child: Text(s)),
+                              )
+                              .toList(),
+                          onChanged: (v) => setState(() {
+                            _subcategory = v;
+                            _selectedBudgetId = null;
+                          }),
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.add_circle_outline_rounded),
+                        tooltip: 'Agregar subcategoría',
+                        onPressed: _category == null
+                            ? null
+                            : () async {
+                                final name = await showAddItemDialog(
+                                  context,
+                                  title: 'Nueva subcategoría',
+                                );
+                                if (name != null && name.isNotEmpty) {
+                                  await state.addSubcategory(
+                                    isExpense: _type != TxType.ingreso,
+                                    category: _category!,
+                                    subcategory: name,
+                                  );
+                                  setState(() => _subcategory = name);
+                                }
+                              },
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.md),
+                Expanded(
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: DropdownButtonFormField<String>(
+                          initialValue: state.countries.contains(_country)
+                              ? _country
+                              : null,
+                          decoration: const InputDecoration(labelText: 'País'),
+                          items: state.countries
+                              .map(
+                                (c) => DropdownMenuItem(value: c, child: Text(c)),
+                              )
+                              .toList(),
+                          onChanged: (v) => setState(() => _country = v!),
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.add_circle_outline_rounded),
+                        tooltip: 'Agregar país',
+                        onPressed: () async {
+                          final name = await showAddItemDialog(
+                            context,
+                            title: 'Nuevo país',
+                          );
+                          if (name != null && name.isNotEmpty) {
+                            await state.addCountry(name);
+                            setState(() => _country = name);
+                          }
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.md),
+
+            // ------- Row: Valor + Mais opções -------
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Expanded(
+                  child: TextFormField(
+                    controller: _amountCtrl,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    decoration: const InputDecoration(
+                      labelText: 'Valor (USD)',
+                      prefixText: '\$ ',
+                    ),
+                    validator: (v) {
+                      if (v == null || v.trim().isEmpty) {
+                        return 'Ingresa un valor';
+                      }
+                      final n = double.tryParse(v.replaceAll(',', '.'));
+                      if (n == null) return 'Valor inválido';
+                      return null;
+                    },
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.md),
+                Expanded(
+                  child: InkWell(
+                    onTap: () => setState(() => _moreOptions = !_moreOptions),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Text(
+                            'Mais opções',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              fontSize: 13,
+                              color: Theme.of(context).textTheme.bodySmall?.color,
+                            ),
+                          ),
+                          Icon(
+                            _moreOptions
+                                ? Icons.expand_less_rounded
+                                : Icons.expand_more_rounded,
+                            size: 20,
+                            color: Theme.of(context).textTheme.bodySmall?.color,
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+
             if (_moreOptions) ...[
               const SizedBox(height: AppSpacing.md),
-              DropdownButtonFormField<PaymentMethod>(
-                initialValue: _method,
-                decoration: const InputDecoration(labelText: 'Método de pago'),
-                items: PaymentMethod.values
-                    .map(
-                      (m) => DropdownMenuItem(value: m, child: Text(m.label)),
-                    )
-                    .toList(),
-                onChanged: (v) => setState(() => _method = v!),
+              TextFormField(
+                controller: _descCtrl,
+                maxLines: 2,
+                decoration: const InputDecoration(
+                  labelText: 'Descrição (opcional)',
+                  alignLabelWithHint: true,
+                ),
               ),
               const SizedBox(height: AppSpacing.md),
               const Text(
@@ -731,33 +752,74 @@ class _TransactionFormScreenState extends State<TransactionFormScreen> {
               ),
             ],
             const SizedBox(height: AppSpacing.xl),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton(
-                    onPressed: () {
-                      setState(() {
-                        _amountCtrl.clear();
-                        _descCtrl.clear();
-                      });
-                    },
-                    child: const Text('Limpiar'),
-                  ),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor:
+                      _type == TxType.ingreso ? AppColors.ingreso : AppColors.gasto,
+                  foregroundColor: Colors.white,
                 ),
-                const SizedBox(width: AppSpacing.md),
-                Expanded(
-                  child: ElevatedButton(
-                    onPressed: () => _submit(state),
-                    child: Text(
-                      widget.existing != null
-                          ? 'Guardar cambios'
-                          : 'Agregar transacción',
-                    ),
-                  ),
+                onPressed: () => _submit(state),
+                child: Text(
+                  widget.existing != null
+                      ? 'Guardar cambios'
+                      : 'Salvar transação',
                 ),
-              ],
+              ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Segmento do toggle "Ingresso / Gasto" — pill colorido conforme o
+/// mockup "Nova transação" (verde para Ingresso, vermelho para Gasto).
+class _TxTypeSegment extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final Color color;
+  final bool selected;
+  final VoidCallback onTap;
+  const _TxTypeSegment({
+    required this.label,
+    required this.icon,
+    required this.color,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: selected ? color : color.withValues(alpha: 0.10),
+      borderRadius: BorderRadius.circular(12),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 13),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                icon,
+                size: 17,
+                color: selected ? Colors.white : color,
+              ),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: TextStyle(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 13.5,
+                  color: selected ? Colors.white : color,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

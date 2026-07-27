@@ -42,38 +42,6 @@ extension TxStatusX on TxStatus {
   }
 }
 
-enum PaymentMethod {
-  efectivo,
-  transferencia,
-  tarjetaCredito,
-  tarjetaDebito,
-  otro,
-}
-
-extension PaymentMethodX on PaymentMethod {
-  String get label {
-    switch (this) {
-      case PaymentMethod.efectivo:
-        return 'Efectivo';
-      case PaymentMethod.transferencia:
-        return 'Transferencia';
-      case PaymentMethod.tarjetaCredito:
-        return 'Tarjeta de crédito';
-      case PaymentMethod.tarjetaDebito:
-        return 'Tarjeta de débito';
-      case PaymentMethod.otro:
-        return 'Otro';
-    }
-  }
-
-  static PaymentMethod fromString(String s) {
-    return PaymentMethod.values.firstWhere(
-      (e) => e.name == s,
-      orElse: () => PaymentMethod.efectivo,
-    );
-  }
-}
-
 enum Priority { alta, media, baja }
 
 extension PriorityX on Priority {

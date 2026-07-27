@@ -275,6 +275,7 @@ class _MonthYearPicker extends StatefulWidget {
 
 class _MonthYearPickerState extends State<_MonthYearPicker> {
   late TextEditingController _yearCtrl;
+  final FocusNode _yearFocus = FocusNode();
 
   @override
   void initState() {
@@ -285,14 +286,27 @@ class _MonthYearPickerState extends State<_MonthYearPicker> {
   @override
   void didUpdateWidget(covariant _MonthYearPicker oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.value.year != widget.value.year) {
-      _yearCtrl.text = widget.value.year.toString();
+    // BUGFIX: antes este método reescrevia `_yearCtrl.text` sempre que
+    // `widget.value.year` mudava — o que inclui as mudanças que O PRÓPRIO
+    // campo provocou (já que cada tecla digitada chama `onChanged` →
+    // `widget.onChanged` → `setState` no pai → rebuild deste widget com um
+    // novo `value.year` idêntico ao texto recém-digitado). Sobrescrever
+    // `.text` sempre reseta a seleção/cursor para o fim, e ao fazer isso a
+    // cada keystroke (especialmente no Flutter Web) o texto digitado
+    // "se apagava" porque o controller era resetado no meio da composição.
+    // Correção: só ressincronizar quando (a) o texto realmente mudou E
+    // (b) o campo não está em foco (ou seja, a mudança veio de uma fonte
+    // externa, como trocar de atalho "Desde"/"Hasta", não da digitação).
+    final newText = widget.value.year.toString();
+    if (_yearCtrl.text != newText && !_yearFocus.hasFocus) {
+      _yearCtrl.text = newText;
     }
   }
 
   @override
   void dispose() {
     _yearCtrl.dispose();
+    _yearFocus.dispose();
     super.dispose();
   }
 
@@ -323,6 +337,7 @@ class _MonthYearPickerState extends State<_MonthYearPicker> {
           flex: 2,
           child: TextFormField(
             controller: _yearCtrl,
+            focusNode: _yearFocus,
             keyboardType: TextInputType.number,
             decoration: const InputDecoration(labelText: 'Año'),
             onChanged: (v) {

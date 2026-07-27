@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
 import '../models/enums.dart';
+import '../models/transaction.dart';
 import '../theme/app_theme.dart';
+import '../utils/formatters.dart';
 import '../utils/icon_map.dart';
 
 /// Badge de status (Pagado/Pendiente).
@@ -90,6 +92,65 @@ class CategoryIcon extends StatelessWidget {
         shape: BoxShape.circle,
       ),
       child: Icon(iconFor(iconKey), color: color, size: size * 0.52),
+    );
+  }
+}
+
+/// Cabecera estándar de pantalla (Design System): ícono + título principal
+/// arriba, y una frase explicativa corta debajo describiendo el propósito
+/// de la pestaña. Usado de forma idéntica en Transacciones, Planificación
+/// y Análisis para garantizar coherencia visual entre las tres.
+class ScreenHeader extends StatelessWidget {
+  final IconData icon;
+  final Color iconColor;
+  final String title;
+  final String subtitle;
+  final Widget? trailing;
+
+  const ScreenHeader({
+    super.key,
+    required this.icon,
+    required this.iconColor,
+    required this.title,
+    required this.subtitle,
+    this.trailing,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppSpacing.md),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  Icon(icon, size: 20, color: iconColor),
+                  const SizedBox(width: AppSpacing.sm),
+                  Text(
+                    title,
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ],
+              ),
+              if (trailing != null) trailing!,
+            ],
+          ),
+          const SizedBox(height: 2),
+          Text(
+            subtitle,
+            style: TextStyle(
+              fontSize: 12,
+              color: Theme.of(context).textTheme.bodySmall?.color,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -183,6 +244,151 @@ class ProgressBarWithOverflow extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Pastilla de status compacta, reutilizada en tarjetas de Planificación y
+/// en la pantalla de Detalles del Plan (p.ej. "Em dia"/"Atenção"/"Cubierto").
+class PlanBadge extends StatelessWidget {
+  final String label;
+  final Color color;
+  const PlanBadge({super.key, required this.label, required this.color});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.16),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 10.5,
+          fontWeight: FontWeight.w700,
+          color: color,
+        ),
+      ),
+    );
+  }
+}
+
+/// Fila etiqueta/valor reutilizada en tarjetas expandidas y en la pantalla
+/// de Detalles del Plan.
+class PlanDetailRow extends StatelessWidget {
+  final String label;
+  final String value;
+  const PlanDetailRow({super.key, required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 110,
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                color: Theme.of(context).textTheme.bodySmall?.color,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: const TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Lista de histórico de movimentações vinculadas a um plano (Gasto/Deuda/
+/// Objetivo) — reutilizada tanto nas tarjetas de Planificación quanto na
+/// pantalla dedicada "Detalhes do Plano".
+class PlanTxnHistoryList extends StatelessWidget {
+  final List<Txn> txns;
+  final Color color;
+  const PlanTxnHistoryList({
+    super.key,
+    required this.txns,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (txns.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Text(
+          'Ninguna transacción registrada todavía.',
+          style: TextStyle(
+            fontSize: 12,
+            color: Theme.of(context).textTheme.bodySmall?.color,
+          ),
+        ),
+      );
+    }
+    return Column(
+      children: txns.map((t) {
+        final isNegative = !t.isEffectivelyInflow;
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: 5),
+          child: Row(
+            children: [
+              Container(
+                width: 7,
+                height: 7,
+                margin: const EdgeInsets.only(right: 9),
+                decoration: BoxDecoration(shape: BoxShape.circle, color: color),
+              ),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      t.description.isNotEmpty
+                          ? t.description
+                          : t.movementTypeLabel,
+                      style: const TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    Text(
+                      formatFullDate(t.date),
+                      style: TextStyle(
+                        fontSize: 10.5,
+                        color: Theme.of(context).textTheme.bodySmall?.color,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                '${isNegative ? '-' : '+'}${formatUsd(t.amount, decimals: false)}',
+                style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w700,
+                  color: isNegative ? color : AppColors.ingreso,
+                ),
+              ),
+            ],
+          ),
+        );
+      }).toList(),
     );
   }
 }

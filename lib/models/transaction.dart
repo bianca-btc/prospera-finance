@@ -12,7 +12,6 @@ class Txn {
   String subcategory;
   double amount;
   DateTime date;
-  PaymentMethod method;
   String description;
   bool isPending; // valor $0 "a programar"
   bool isDeficitRollover; // gerado automaticamente por rollover de déficit
@@ -48,7 +47,6 @@ class Txn {
     required this.subcategory,
     required this.amount,
     required this.date,
-    this.method = PaymentMethod.efectivo,
     this.description = '',
     this.isPending = false,
     this.isDeficitRollover = false,
@@ -97,7 +95,6 @@ class Txn {
     'subcategory': subcategory,
     'amount': amount,
     'date': date.toIso8601String(),
-    'method': method.name,
     'description': description,
     'isPending': isPending,
     'isDeficitRollover': isDeficitRollover,
@@ -118,7 +115,6 @@ class Txn {
     subcategory: json['subcategory'] as String,
     amount: (json['amount'] as num).toDouble(),
     date: DateTime.parse(json['date'] as String),
-    method: PaymentMethodX.fromString(json['method'] as String? ?? 'efectivo'),
     description: json['description'] as String? ?? '',
     isPending: json['isPending'] as bool? ?? false,
     isDeficitRollover: json['isDeficitRollover'] as bool? ?? false,
@@ -138,7 +134,6 @@ class Txn {
     String? subcategory,
     double? amount,
     DateTime? date,
-    PaymentMethod? method,
     String? description,
     bool? isPending,
     bool? isDeficitRollover,
@@ -161,7 +156,6 @@ class Txn {
       subcategory: subcategory ?? this.subcategory,
       amount: amount ?? this.amount,
       date: date ?? this.date,
-      method: method ?? this.method,
       description: description ?? this.description,
       isPending: isPending ?? this.isPending,
       isDeficitRollover: isDeficitRollover ?? this.isDeficitRollover,

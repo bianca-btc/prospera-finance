@@ -49,11 +49,13 @@ class _HomeScreenState extends State<HomeScreen> {
           ],
         ),
         actions: [
-          _FocusToggleButton(
-            active: _focusOnList,
-            onTap: () => setState(() => _focusOnList = !_focusOnList),
-          ),
-          const SizedBox(width: 4),
+          if (_tab == 0) ...[
+            _FocusToggleButton(
+              active: _focusOnList,
+              onTap: () => setState(() => _focusOnList = !_focusOnList),
+            ),
+            const SizedBox(width: 4),
+          ],
           IconButton(
             tooltip: 'Ajustes',
             icon: const Icon(Icons.settings_outlined),
@@ -74,17 +76,23 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       body: Column(
         children: [
-          const SizedBox(height: 4),
-          // El selector de período ahora comparte la misma fila que los
-          // KPIs de Ingresos/Gastos/Inversiones (ver KpiHeader), para no
-          // ocupar una línea completa solo para el filtro.
-          KpiHeader(
-            compact: _focusOnList,
-            onGastosTap: () => setState(() => _tab = 2),
-            onInversionesTap: () => setState(() => _tab = 2),
-          ),
-          const SizedBox(height: 4),
-          const Divider(height: 1),
+          // Los KPIs solo tienen sentido como resumen general del estado
+          // financiero -- por eso aparecen ÚNICAMENTE en la pestaña Resumen.
+          // En las demás pestañas (Transacciones/Planificación/Análisis) se
+          // ocultan por completo para dejar toda la pantalla enfocada en su
+          // propio listado, evitando la redundancia de repetir el mismo
+          // resumen en todas partes.
+          if (_tab == 0) ...[
+            const SizedBox(height: 4),
+            KpiHeader(
+              compact: _focusOnList,
+              onGastosTap: () => setState(() => _tab = 2),
+              onInversionesTap: () => setState(() => _tab = 2),
+              onDeudasTap: () => setState(() => _tab = 2),
+            ),
+            const SizedBox(height: 4),
+            const Divider(height: 1),
+          ],
           Expanded(child: _pages[_tab]),
         ],
       ),

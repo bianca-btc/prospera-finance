@@ -10,12 +10,158 @@ import '../theme/app_theme.dart';
 import '../utils/formatters.dart';
 import '../utils/period.dart';
 import '../widgets/common.dart';
+import '../widgets/filter_bar.dart';
+import '../widgets/period_selector.dart';
 
-/// Aba Análisis: responde apenas duas perguntas ("¿Dónde gasto más?" y
-/// "¿Dónde gasto más por país?"), seguidas de un resumen automático con
-/// lenguaje de tendencia. Sin exceso de filtros ni gráficos.
-class AnalisisScreen extends StatelessWidget {
+/// Filtro de tipo de movimiento para los gráficos de esta pantalla — mismo
+/// patrón visual de "chips" ya usado en Transações/Planificación, pero
+/// coloreado según el color semántico de cada [TxType] (en vez de un único
+/// color de acento), lo que refuerza la identidad visual de Análisis frente
+/// a esas otras dos pestañas sin romper la paleta general del app.
+enum _AnalisisFilter { gastos, ingresos, inversiones, deudas, todos }
+
+/// Aba Análisis: responde las preguntas "¿Dónde gasto/recibo/invierto más?"
+/// y su equivalente por país, con un filtro de tipo de movimiento y un
+/// selector de período — seguidas de un resumen automático con lenguaje de
+/// tendencia.
+class AnalisisScreen extends StatefulWidget {
   const AnalisisScreen({super.key});
+
+  @override
+  State<AnalisisScreen> createState() => _AnalisisScreenState();
+}
+
+class _AnalisisScreenState extends State<AnalisisScreen> {
+  _AnalisisFilter _filter = _AnalisisFilter.gastos;
+
+  // ------- Filtros avançados (categoria/subcategoria/país) -------
+  String? _advCategory;
+  String? _advSubcategory;
+  String? _advCountry;
+
+  bool get _hasAdvancedFilters =>
+      _advCategory != null || _advSubcategory != null || _advCountry != null;
+
+  void _clearAdvancedFilters() {
+    _advCategory = null;
+    _advSubcategory = null;
+    _advCountry = null;
+  }
+
+  /// Painel de "filtros avançados" — segue exatamente o mesmo padrão visual
+  /// e estrutural do painel de Planificación (AdvancedFilterLabel + Wrap de
+  /// ChoiceChip, com opção "Todas/Todos" primeiro em cada grupo).
+  void _openAdvancedFilters(BuildContext context, AppState state) {
+    final categories = state.expenseCategories;
+    final countries = state.countries;
+    showAdvancedFiltersSheet(
+      context,
+      title: 'Filtros avanzados',
+      onClear: _clearAdvancedFilters,
+      onApply: () => setState(() {}),
+      builder: (ctx, setModalState) {
+        return StatefulBuilder(
+          builder: (ctx, localSet) {
+            final subOptions = _advCategory == null
+                ? <String>[]
+                : (categories
+                          .where((c) => c.name == _advCategory)
+                          .map((c) => c.subcategories)
+                          .firstOrNull ??
+                      const <String>[]);
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const AdvancedFilterLabel('Categoría'),
+                Wrap(
+                  spacing: AppSpacing.sm,
+                  runSpacing: AppSpacing.sm,
+                  children: [
+                    ChoiceChip(
+                      label: const Text('Todas'),
+                      selected: _advCategory == null,
+                      onSelected: (_) {
+                        setState(() {
+                          _advCategory = null;
+                          _advSubcategory = null;
+                        });
+                        localSet(() {});
+                      },
+                    ),
+                    ...categories.map(
+                      (c) => ChoiceChip(
+                        label: Text(c.name),
+                        selected: _advCategory == c.name,
+                        onSelected: (_) {
+                          setState(() {
+                            _advCategory = c.name;
+                            _advSubcategory = null;
+                          });
+                          localSet(() {});
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+                if (subOptions.isNotEmpty) ...[
+                  const AdvancedFilterLabel('Subcategoría'),
+                  Wrap(
+                    spacing: AppSpacing.sm,
+                    runSpacing: AppSpacing.sm,
+                    children: [
+                      ChoiceChip(
+                        label: const Text('Todas'),
+                        selected: _advSubcategory == null,
+                        onSelected: (_) {
+                          setState(() => _advSubcategory = null);
+                          localSet(() {});
+                        },
+                      ),
+                      ...subOptions.map(
+                        (s) => ChoiceChip(
+                          label: Text(s),
+                          selected: _advSubcategory == s,
+                          onSelected: (_) {
+                            setState(() => _advSubcategory = s);
+                            localSet(() {});
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+                const AdvancedFilterLabel('País'),
+                Wrap(
+                  spacing: AppSpacing.sm,
+                  runSpacing: AppSpacing.sm,
+                  children: [
+                    ChoiceChip(
+                      label: const Text('Todos'),
+                      selected: _advCountry == null,
+                      onSelected: (_) {
+                        setState(() => _advCountry = null);
+                        localSet(() {});
+                      },
+                    ),
+                    ...countries.map(
+                      (c) => ChoiceChip(
+                        label: Text(c),
+                        selected: _advCountry == c,
+                        onSelected: (_) {
+                          setState(() => _advCountry = c);
+                          localSet(() {});
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
 
   static const _palette = [
     Color(0xFFFF5252),
@@ -28,14 +174,86 @@ class AnalisisScreen extends StatelessWidget {
     Color(0xFFEC407A),
   ];
 
+  /// Conjunto de tipos incluidos por cada opción del filtro. "Gastos"
+  /// mantiene el comportamiento original de la pantalla (gasto + cuota de
+  /// deuda contados juntos), evitando romper el análisis por defecto.
+  Set<TxType> get _typesForFilter {
+    switch (_filter) {
+      case _AnalisisFilter.gastos:
+        return {TxType.gasto, TxType.deuda};
+      case _AnalisisFilter.ingresos:
+        return {TxType.ingreso};
+      case _AnalisisFilter.inversiones:
+        return {TxType.inversion};
+      case _AnalisisFilter.deudas:
+        return {TxType.deuda};
+      case _AnalisisFilter.todos:
+        return {TxType.ingreso, TxType.gasto, TxType.inversion, TxType.deuda};
+    }
+  }
+
+  String get _sectionTitle1 {
+    switch (_filter) {
+      case _AnalisisFilter.gastos:
+        return '¿Dónde gasto más?';
+      case _AnalisisFilter.ingresos:
+        return '¿De dónde viene tu dinero?';
+      case _AnalisisFilter.inversiones:
+        return '¿Dónde inviertes más?';
+      case _AnalisisFilter.deudas:
+        return '¿Cuáles son tus mayores deudas?';
+      case _AnalisisFilter.todos:
+        return '¿Dónde se concentra tu dinero?';
+    }
+  }
+
+  String get _sectionTitle2 {
+    switch (_filter) {
+      case _AnalisisFilter.gastos:
+        return '¿Dónde gasto más por país?';
+      case _AnalisisFilter.ingresos:
+        return '¿De dónde viene tu dinero por país?';
+      case _AnalisisFilter.inversiones:
+        return '¿Dónde inviertes más por país?';
+      case _AnalisisFilter.deudas:
+        return '¿Dónde tienes más deudas por país?';
+      case _AnalisisFilter.todos:
+        return '¿Cómo se distribuye por país?';
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = context.watch<AppState>();
     final range = state.selectedRange;
-    final txns = state
+    final types = _typesForFilter;
+    var txns = state
+        .txnsForRange(range)
+        .where((t) => types.contains(t.type))
+        .toList();
+    if (_hasAdvancedFilters) {
+      txns = txns.where((t) {
+        if (_advCategory != null && t.category != _advCategory) return false;
+        if (_advSubcategory != null && t.subcategory != _advSubcategory) {
+          return false;
+        }
+        if (_advCountry != null && t.country != _advCountry) return false;
+        return true;
+      }).toList();
+    }
+    // El Resumen automático más abajo siempre analiza gasto+deuda —
+    // independiente del filtro elegido arriba — porque su narrativa de
+    // tendencia ("tu mayor gasto fue...") no tiene sentido si se mezclan
+    // otros tipos de movimiento.
+    final resumenTxns = state
         .txnsForRange(range)
         .where((t) => t.type == TxType.gasto || t.type == TxType.deuda)
         .toList();
+    final Map<String, double> byCategoryResumen = {};
+    for (final t in resumenTxns) {
+      byCategoryResumen[t.category] =
+          (byCategoryResumen[t.category] ?? 0) + t.amount;
+    }
 
     // Gráfico 1: gastos por categoría (mayor a menor).
     final Map<String, double> byCategory = {};
@@ -63,7 +281,29 @@ class AnalisisScreen extends StatelessWidget {
         AppSpacing.xxxl,
       ),
       children: [
-        SectionTitle(title: '¿Dónde gasto más?'),
+        ScreenHeader(
+          icon: Icons.bar_chart_rounded,
+          iconColor: AppColors.inversion,
+          title: 'Análisis',
+          subtitle:
+              'Comprende tus patrones financieros y toma mejores decisiones.',
+          trailing: const PeriodSelector(inline: true),
+        ),
+        SegmentedFilterBar<_AnalisisFilter>(
+          options: const [
+            FilterOption(_AnalisisFilter.gastos, 'Gastos'),
+            FilterOption(_AnalisisFilter.ingresos, 'Ingresos'),
+            FilterOption(_AnalisisFilter.inversiones, 'Inversiones'),
+            FilterOption(_AnalisisFilter.deudas, 'Deudas'),
+            FilterOption(_AnalisisFilter.todos, 'Todos'),
+          ],
+          selected: _filter,
+          onChanged: (f) => setState(() => _filter = f),
+          onAdvancedTap: () => _openAdvancedFilters(context, state),
+          advancedActive: _hasAdvancedFilters,
+        ),
+        const SizedBox(height: AppSpacing.lg),
+        SectionTitle(title: _sectionTitle1),
         SectionCard(
           child: sortedCats.isEmpty
               ? const SizedBox(
@@ -86,10 +326,9 @@ class AnalisisScreen extends StatelessWidget {
                               child: BarChart(
                                 BarChartData(
                                   alignment: BarChartAlignment.spaceAround,
-                                  maxY:
-                                      (sortedCats.isEmpty
-                                          ? 10
-                                          : sortedCats.first.value * 1.2 + 5),
+                                  maxY: (sortedCats.isEmpty
+                                      ? 10
+                                      : sortedCats.first.value * 1.2 + 5),
                                   barTouchData: BarTouchData(enabled: true),
                                   titlesData: FlTitlesData(
                                     leftTitles: const AxisTitles(
@@ -232,7 +471,7 @@ class AnalisisScreen extends StatelessWidget {
                 ),
         ),
         const SizedBox(height: AppSpacing.xl),
-        SectionTitle(title: '¿Dónde gasto más por país?'),
+        SectionTitle(title: _sectionTitle2),
         SectionCard(
           child: byCategoryCountry.isEmpty
               ? const SizedBox(
@@ -339,7 +578,7 @@ class AnalisisScreen extends StatelessWidget {
           child: _AutoSummary(
             state: state,
             range: range,
-            byCategory: byCategory,
+            byCategory: byCategoryResumen,
           ),
         ),
       ],

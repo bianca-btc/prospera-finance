@@ -7,17 +7,11 @@ import '../state/app_state.dart';
 import '../theme/app_theme.dart';
 import '../utils/formatters.dart';
 import '../widgets/common.dart';
+import '../widgets/filter_bar.dart';
+import '../widgets/period_selector.dart';
 import 'transaction_form_screen.dart';
 
-enum _QuickFilter {
-  todos,
-  gastos,
-  ingresos,
-  inversiones,
-  deudas,
-  personal,
-  empresa,
-}
+enum _QuickFilter { todos, gastos, ingresos, objetivos, deudas }
 
 class TransaccionesScreen extends StatefulWidget {
   const TransaccionesScreen({super.key});
@@ -29,23 +23,198 @@ class TransaccionesScreen extends StatefulWidget {
 class _TransaccionesScreenState extends State<TransaccionesScreen> {
   _QuickFilter _filter = _QuickFilter.todos;
 
+  // ------- Filtros avançados (categoria/subcategoria/país/ámbito) -------
+  String? _scope; // Personal | Empresa | null (ambos)
+  String? _advCategory;
+  String? _advSubcategory;
+  String? _advCountry;
+
+  bool get _hasAdvancedFilters =>
+      _scope != null ||
+      _advCategory != null ||
+      _advSubcategory != null ||
+      _advCountry != null;
+
+  void _clearAdvancedFilters() {
+    _scope = null;
+    _advCategory = null;
+    _advSubcategory = null;
+    _advCountry = null;
+  }
+
   List<Txn> _applyFilter(List<Txn> list) {
+    Iterable<Txn> result = list;
     switch (_filter) {
       case _QuickFilter.todos:
-        return list;
+        break;
       case _QuickFilter.gastos:
-        return list.where((t) => t.type == TxType.gasto).toList();
+        result = result.where((t) => t.type == TxType.gasto);
       case _QuickFilter.ingresos:
-        return list.where((t) => t.type == TxType.ingreso).toList();
-      case _QuickFilter.inversiones:
-        return list.where((t) => t.type == TxType.inversion).toList();
+        result = result.where((t) => t.type == TxType.ingreso);
+      case _QuickFilter.objetivos:
+        result = result.where((t) => t.type == TxType.inversion);
       case _QuickFilter.deudas:
-        return list.where((t) => t.type == TxType.deuda).toList();
-      case _QuickFilter.personal:
-        return list.where((t) => t.scope == 'Personal').toList();
-      case _QuickFilter.empresa:
-        return list.where((t) => t.scope == 'Empresa').toList();
+        result = result.where((t) => t.type == TxType.deuda);
     }
+    if (_scope != null) {
+      result = result.where((t) => t.scope == _scope);
+    }
+    if (_advCategory != null) {
+      result = result.where((t) => t.category == _advCategory);
+    }
+    if (_advSubcategory != null) {
+      result = result.where((t) => t.subcategory == _advSubcategory);
+    }
+    if (_advCountry != null) {
+      result = result.where((t) => t.country == _advCountry);
+    }
+    return result.toList();
+  }
+
+  /// Painel de "filtros avançados" — segue exatamente o mesmo padrão visual
+  /// e estrutural do painel de Planificación (AdvancedFilterLabel + Wrap de
+  /// ChoiceChip, com opção "Todos/Todas" primeiro em cada grupo).
+  void _openAdvancedFilters(BuildContext context, AppState state) {
+    final categories = state.expenseCategories;
+    final countries = state.countries;
+    showAdvancedFiltersSheet(
+      context,
+      title: 'Filtros avanzados',
+      onClear: _clearAdvancedFilters,
+      onApply: () => setState(() {}),
+      builder: (ctx, setModalState) {
+        return StatefulBuilder(
+          builder: (ctx, localSet) {
+            final subOptions = _advCategory == null
+                ? <String>[]
+                : (categories
+                          .where((c) => c.name == _advCategory)
+                          .map((c) => c.subcategories)
+                          .firstOrNull ??
+                      const <String>[]);
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const AdvancedFilterLabel('Ámbito'),
+                Wrap(
+                  spacing: AppSpacing.sm,
+                  runSpacing: AppSpacing.sm,
+                  children: [
+                    ChoiceChip(
+                      label: const Text('Todos'),
+                      selected: _scope == null,
+                      onSelected: (_) {
+                        setState(() => _scope = null);
+                        localSet(() {});
+                      },
+                    ),
+                    ChoiceChip(
+                      label: const Text('Personal'),
+                      selected: _scope == 'Personal',
+                      onSelected: (_) {
+                        setState(() => _scope = 'Personal');
+                        localSet(() {});
+                      },
+                    ),
+                    ChoiceChip(
+                      label: const Text('Empresa'),
+                      selected: _scope == 'Empresa',
+                      onSelected: (_) {
+                        setState(() => _scope = 'Empresa');
+                        localSet(() {});
+                      },
+                    ),
+                  ],
+                ),
+                const AdvancedFilterLabel('Categoría'),
+                Wrap(
+                  spacing: AppSpacing.sm,
+                  runSpacing: AppSpacing.sm,
+                  children: [
+                    ChoiceChip(
+                      label: const Text('Todas'),
+                      selected: _advCategory == null,
+                      onSelected: (_) {
+                        setState(() {
+                          _advCategory = null;
+                          _advSubcategory = null;
+                        });
+                        localSet(() {});
+                      },
+                    ),
+                    ...categories.map(
+                      (c) => ChoiceChip(
+                        label: Text(c.name),
+                        selected: _advCategory == c.name,
+                        onSelected: (_) {
+                          setState(() {
+                            _advCategory = c.name;
+                            _advSubcategory = null;
+                          });
+                          localSet(() {});
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+                if (subOptions.isNotEmpty) ...[
+                  const AdvancedFilterLabel('Subcategoría'),
+                  Wrap(
+                    spacing: AppSpacing.sm,
+                    runSpacing: AppSpacing.sm,
+                    children: [
+                      ChoiceChip(
+                        label: const Text('Todas'),
+                        selected: _advSubcategory == null,
+                        onSelected: (_) {
+                          setState(() => _advSubcategory = null);
+                          localSet(() {});
+                        },
+                      ),
+                      ...subOptions.map(
+                        (s) => ChoiceChip(
+                          label: Text(s),
+                          selected: _advSubcategory == s,
+                          onSelected: (_) {
+                            setState(() => _advSubcategory = s);
+                            localSet(() {});
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+                const AdvancedFilterLabel('País'),
+                Wrap(
+                  spacing: AppSpacing.sm,
+                  runSpacing: AppSpacing.sm,
+                  children: [
+                    ChoiceChip(
+                      label: const Text('Todos'),
+                      selected: _advCountry == null,
+                      onSelected: (_) {
+                        setState(() => _advCountry = null);
+                        localSet(() {});
+                      },
+                    ),
+                    ...countries.map(
+                      (c) => ChoiceChip(
+                        label: Text(c),
+                        selected: _advCountry == c,
+                        onSelected: (_) {
+                          setState(() => _advCountry = c);
+                          localSet(() {});
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 
   @override
@@ -66,20 +235,30 @@ class _TransaccionesScreenState extends State<TransaccionesScreen> {
       body: Column(
         children: [
           const SizedBox(height: AppSpacing.sm),
-          SizedBox(
-            height: 38,
-            child: ListView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
-              children: [
-                _filterChip('Todos', _QuickFilter.todos),
-                _filterChip('Gastos', _QuickFilter.gastos),
-                _filterChip('Ingresos', _QuickFilter.ingresos),
-                _filterChip('Inversiones', _QuickFilter.inversiones),
-                _filterChip('Deudas', _QuickFilter.deudas),
-                _filterChip('Personal', _QuickFilter.personal),
-                _filterChip('Empresa', _QuickFilter.empresa),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+            child: ScreenHeader(
+              icon: Icons.receipt_long_rounded,
+              iconColor: AppColors.brandAmber,
+              title: 'Transacciones',
+              subtitle: 'Registra y controla todos tus movimientos financieros.',
+              trailing: const PeriodSelector(inline: true),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
+            child: SegmentedFilterBar<_QuickFilter>(
+              options: const [
+                FilterOption(_QuickFilter.todos, 'Todos'),
+                FilterOption(_QuickFilter.gastos, 'Gastos'),
+                FilterOption(_QuickFilter.ingresos, 'Ingresos'),
+                FilterOption(_QuickFilter.objetivos, 'Objetivos'),
+                FilterOption(_QuickFilter.deudas, 'Deudas'),
               ],
+              selected: _filter,
+              onChanged: (f) => setState(() => _filter = f),
+              onAdvancedTap: () => _openAdvancedFilters(context, state),
+              advancedActive: _hasAdvancedFilters,
             ),
           ),
           const SizedBox(height: AppSpacing.sm),
@@ -105,18 +284,6 @@ class _TransaccionesScreenState extends State<TransaccionesScreen> {
                   ),
           ),
         ],
-      ),
-    );
-  }
-
-  Widget _filterChip(String label, _QuickFilter f) {
-    final selected = _filter == f;
-    return Padding(
-      padding: const EdgeInsets.only(right: AppSpacing.sm),
-      child: ChoiceChip(
-        label: Text(label),
-        selected: selected,
-        onSelected: (_) => setState(() => _filter = f),
       ),
     );
   }

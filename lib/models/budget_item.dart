@@ -21,7 +21,6 @@ class BudgetItem {
   Priority priority;
   TxStatus status;
   String description;
-  PaymentMethod method;
   bool autoSuggested; // criado automaticamente pelo motor de sugestões
   String? linkedDebtId; // item gerado automaticamente por uma Deuda
   String? linkedGoalId; // item gerado automaticamente por um Objetivo
@@ -38,7 +37,6 @@ class BudgetItem {
     this.priority = Priority.media,
     this.status = TxStatus.pendiente,
     this.description = '',
-    this.method = PaymentMethod.efectivo,
     this.autoSuggested = false,
     this.linkedDebtId,
     this.linkedGoalId,
@@ -59,7 +57,6 @@ class BudgetItem {
     'priority': priority.name,
     'status': status.name,
     'description': description,
-    'method': method.name,
     'autoSuggested': autoSuggested,
     'linkedDebtId': linkedDebtId,
     'linkedGoalId': linkedGoalId,
@@ -85,9 +82,6 @@ class BudgetItem {
       priority: PriorityX.fromString(json['priority'] as String? ?? 'media'),
       status: TxStatusX.fromString(json['status'] as String? ?? 'pendiente'),
       description: legacyDebtId != null ? '' : desc,
-      method: PaymentMethodX.fromString(
-        json['method'] as String? ?? 'efectivo',
-      ),
       autoSuggested: json['autoSuggested'] as bool? ?? false,
       linkedDebtId: json['linkedDebtId'] as String? ?? legacyDebtId,
       linkedGoalId: json['linkedGoalId'] as String?,
@@ -103,7 +97,6 @@ class BudgetItem {
     Priority? priority,
     TxStatus? status,
     String? description,
-    PaymentMethod? method,
     bool? autoSuggested,
     String? linkedDebtId,
     String? linkedGoalId,
@@ -120,7 +113,6 @@ class BudgetItem {
       priority: priority ?? this.priority,
       status: status ?? this.status,
       description: description ?? this.description,
-      method: method ?? this.method,
       autoSuggested: autoSuggested ?? this.autoSuggested,
       linkedDebtId: linkedDebtId ?? this.linkedDebtId,
       linkedGoalId: linkedGoalId ?? this.linkedGoalId,
