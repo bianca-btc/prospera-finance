@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:math';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:uuid/uuid.dart';
 
@@ -15,8 +14,6 @@ import '../models/collaborator.dart';
 import '../services/storage_service.dart';
 import '../services/seed_data.dart';
 import '../services/insights_engine.dart';
-import '../services/google_auth_service.dart';
-import '../services/google_sheets_service.dart';
 import '../utils/period.dart';
 
 const _uuid = Uuid();
@@ -61,29 +58,6 @@ BudgetProgressLevel budgetProgressLevelFor(double ratio) {
 class AppState extends ChangeNotifier {
   final StorageService storage;
   AppState(this.storage);
-
-  // ---------------- Sincronización con Google Sheets ----------------
-  final GoogleAuthService googleAuth = GoogleAuthService();
-  late final GoogleSheetsService googleSheets = GoogleSheetsService(
-    googleAuth,
-  );
-  Timer? _cloudSyncDebounce;
-  bool _cloudSyncInProgress = false;
-  bool _suppressNextCloudSync = false;
-  bool _prevGoogleSignedIn = false;
-  DateTime? _lastCloudSyncAt;
-  String? _cloudSyncError;
-  bool _pendingRemoteBackupFound = false;
-  DateTime? _pendingRemoteBackupUpdatedAt;
-
-  bool get googleConfigured => googleAuth.isConfigured;
-  bool get googleSignedIn => googleAuth.isSignedIn;
-  String? get googleUserEmail => googleAuth.currentUser?.email;
-  bool get cloudSyncInProgress => _cloudSyncInProgress;
-  DateTime? get lastCloudSyncAt => _lastCloudSyncAt;
-  String? get cloudSyncError => _cloudSyncError;
-  bool get pendingRemoteBackupFound => _pendingRemoteBackupFound;
-  DateTime? get pendingRemoteBackupUpdatedAt => _pendingRemoteBackupUpdatedAt;
 
   List<Txn> _txns = [];
   List<BudgetItem> _budgets = [];
@@ -132,41 +106,6 @@ class AppState extends ChangeNotifier {
   // ---------------- Inicialização ----------------
   Future<void> init() async {
     await storage.init();
-
-    // ---- Sincronização com Google Sheets ----
-    // Inicializa o SDK do Google (não faz nada se não houver Client
-    // ID configurado — ver lib/config/google_config.dart) e tenta
-    // reconectar a sessão salva silenciosamente. Se a instalação é
-    // nova (nunca foi "semeada" localmente) e o usuário já tem uma
-    // sessão Google válida, busca um respaldo existente no Google
-    // Sheets ANTES de carregar os dados de exemplo — é assim que os
-    // dados "se recuperam automaticamente" ao reinstalar o app.
-    await googleAuth.initialize();
-    bool importedFromCloud = false;
-    if (googleAuth.isConfigured) {
-      try {
-        await googleAuth.attemptSilentSignIn();
-      } catch (_) {
-        // Falha silenciosa: segue no modo local normalmente.
-      }
-      if (googleAuth.isSignedIn && !storage.isSeeded) {
-        try {
-          final remote = await googleSheets.downloadSnapshot(
-            interactive: false,
-          );
-          if (remote != null) {
-            await storage.importAll(remote);
-            await storage.setSeeded();
-            importedFromCloud = true;
-          }
-        } catch (e) {
-          _cloudSyncError = e.toString();
-          if (kDebugMode) {
-            debugPrint('Restauração desde Google Sheets falhou: $e');
-          }
-        }
-      }
-    }
 
     _themeMode = storage.loadThemeMode() == 'light'
         ? ThemeMode.light
@@ -218,174 +157,7 @@ class AppState extends ChangeNotifier {
     }
 
     _loading = false;
-    _prevGoogleSignedIn = googleAuth.isSignedIn;
     notifyListeners();
-
-    // Escuta futuras conexões/desconexões de la cuenta Google (por
-    // ejemplo, si el usuario se conecta más tarde desde Ajustes) para
-    // disparar la primera sincronización automáticamente.
-    googleAuth.addListener(_onGoogleAuthChanged);
-
-    if (googleAuth.isSignedIn && !importedFromCloud) {
-      // Ya había sesión (o se restauró silenciosamente) pero no se
-      // encontró/usó un respaldo remoto (por ejemplo, ya existían
-      // datos locales) — sube el estado local para que Google Sheets
-      // quede al día desde el primer momento.
-      scheduleCloudSync(immediate: true);
-    }
-  }
-
-  void _onGoogleAuthChanged() {
-    final nowSignedIn = googleAuth.isSignedIn;
-    if (nowSignedIn && !_prevGoogleSignedIn) {
-      // El usuario acaba de conectar su cuenta Google: sube el
-      // estado local actual de inmediato para dejar el respaldo
-      // creado/actualizado.
-      scheduleCloudSync(immediate: true);
-    }
-    _prevGoogleSignedIn = nowSignedIn;
-    notifyListeners();
-  }
-
-  /// Debe llamarse justo después de un inicio de sesión exitoso
-  /// disparado manualmente desde la UI (botón "Conectar con
-  /// Google"). Comprueba si ya existe un respaldo remoto: si lo hay,
-  /// deja la decisión de restaurarlo (o no) en manos de la UI
-  /// (`pendingRemoteBackupFound`/`restoreNowFromGoogleSheets`), para
-  /// no sobrescribir datos locales sin que el usuario lo confirme. Si
-  /// no hay ningún respaldo todavía, sube el estado local de una vez
-  /// para crearlo.
-  Future<void> syncAfterGoogleConnected() async {
-    try {
-      final updatedAt = await googleSheets.lastUpdatedAt(interactive: true);
-      if (updatedAt != null) {
-        _pendingRemoteBackupFound = true;
-        _pendingRemoteBackupUpdatedAt = updatedAt;
-        notifyListeners();
-        return;
-      }
-    } catch (e) {
-      _cloudSyncError = e.toString();
-    }
-    await syncNowWithGoogleSheets(interactive: true);
-  }
-
-  /// El usuario decidió, tras ver el aviso de respaldo remoto
-  /// encontrado, DESCARTAR ese respaldo y mantener/subir sus datos
-  /// locales actuales en su lugar.
-  Future<void> dismissPendingRemoteBackupAndKeepLocal() async {
-    _pendingRemoteBackupFound = false;
-    _pendingRemoteBackupUpdatedAt = null;
-    await syncNowWithGoogleSheets(interactive: true);
-  }
-
-  /// El usuario decidió restaurar el respaldo remoto encontrado
-  /// (sobrescribiendo los datos locales actuales).
-  Future<bool> acceptPendingRemoteBackup() async {
-    _pendingRemoteBackupFound = false;
-    _pendingRemoteBackupUpdatedAt = null;
-    return restoreNowFromGoogleSheets(interactive: true);
-  }
-
-  /// Programa (con un pequeño "debounce") una subida del snapshot
-  /// completo a Google Sheets. Se llama automáticamente después de
-  /// cada cambio de datos (ver [notifyListeners] sobrescrito abajo),
-  /// para que la sincronización sea invisible para el usuario.
-  void scheduleCloudSync({bool immediate = false}) {
-    if (!googleAuth.isSignedIn) return;
-    _cloudSyncDebounce?.cancel();
-    if (immediate) {
-      unawaited(syncNowWithGoogleSheets());
-      return;
-    }
-    _cloudSyncDebounce = Timer(
-      const Duration(seconds: 3),
-      () => unawaited(syncNowWithGoogleSheets()),
-    );
-  }
-
-  /// Sube inmediatamente (sin esperar el debounce) el snapshot
-  /// completo de datos a la hoja de Google Sheets del usuario.
-  Future<bool> syncNowWithGoogleSheets({bool interactive = false}) async {
-    if (!googleAuth.isSignedIn) return false;
-    if (_cloudSyncInProgress) return false;
-    _cloudSyncInProgress = true;
-    _cloudSyncError = null;
-    notifyListeners();
-    try {
-      final snapshot = storage.exportAll();
-      await googleSheets.uploadSnapshot(snapshot, interactive: interactive);
-      _lastCloudSyncAt = DateTime.now();
-      _cloudSyncError = null;
-      return true;
-    } catch (e) {
-      _cloudSyncError = e.toString();
-      if (kDebugMode) {
-        debugPrint('syncNowWithGoogleSheets error: $e');
-      }
-      return false;
-    } finally {
-      _cloudSyncInProgress = false;
-      notifyListeners();
-    }
-  }
-
-  /// Descarga el respaldo remoto y lo aplica localmente,
-  /// reemplazando los datos actuales del dispositivo. Debe usarse
-  /// solo cuando el usuario lo pide explícitamente (por ejemplo,
-  /// botón "Restaurar desde Google Sheets" en Ajustes), ya que
-  /// sobrescribe lo que haya en el dispositivo.
-  Future<bool> restoreNowFromGoogleSheets({bool interactive = true}) async {
-    if (!googleAuth.isSignedIn) return false;
-    _cloudSyncInProgress = true;
-    _cloudSyncError = null;
-    notifyListeners();
-    try {
-      final remote = await googleSheets.downloadSnapshot(
-        interactive: interactive,
-      );
-      if (remote == null) {
-        _cloudSyncError = 'No se encontró ningún respaldo en Google Sheets.';
-        return false;
-      }
-      _suppressNextCloudSync = true;
-      await importSnapshot(remote);
-      _lastCloudSyncAt = DateTime.now();
-      return true;
-    } catch (e) {
-      _cloudSyncError = e.toString();
-      return false;
-    } finally {
-      _cloudSyncInProgress = false;
-      notifyListeners();
-    }
-  }
-
-  Future<void> disconnectGoogle() async {
-    _cloudSyncDebounce?.cancel();
-    await googleAuth.signOut();
-    googleSheets.resetCache();
-    notifyListeners();
-  }
-
-  @override
-  void notifyListeners() {
-    super.notifyListeners();
-    if (_suppressNextCloudSync) {
-      _suppressNextCloudSync = false;
-      return;
-    }
-    if (!_loading && googleAuth.isSignedIn) {
-      scheduleCloudSync();
-    }
-  }
-
-  @override
-  void dispose() {
-    _cloudSyncDebounce?.cancel();
-    googleAuth.removeListener(_onGoogleAuthChanged);
-    googleAuth.dispose();
-    super.dispose();
   }
 
   Future<void> _seed() async {
@@ -601,9 +373,7 @@ class AppState extends ChangeNotifier {
     final s = _selectedRange.start.compareTo(ym) <= 0
         ? _selectedRange.start
         : ym;
-    final e = _selectedRange.end.compareTo(ym) >= 0
-        ? _selectedRange.end
-        : ym;
+    final e = _selectedRange.end.compareTo(ym) >= 0 ? _selectedRange.end : ym;
     setSelectedRange(PeriodRange(s, e));
   }
 
@@ -670,7 +440,6 @@ class AppState extends ChangeNotifier {
       subcategory: t.subcategory,
       amount: t.amount,
       date: t.date,
-      method: t.method,
       description: t.description,
       scope: t.scope,
     );
@@ -723,10 +492,9 @@ class AppState extends ChangeNotifier {
   bool _recalcGoal(String goalId) {
     final idx = _goals.indexWhere((g) => g.id == goalId);
     if (idx == -1) return false;
-    final total = _txns.where((t) => t.goalId == goalId).fold(
-      0.0,
-      (s, t) => t.isWithdrawal ? s - t.amount : s + t.amount,
-    );
+    final total = _txns
+        .where((t) => t.goalId == goalId)
+        .fold(0.0, (s, t) => t.isWithdrawal ? s - t.amount : s + t.amount);
     if ((total - _goals[idx].currentAmount).abs() < 0.005) return false;
     _goals[idx] = _goals[idx].copyWith(currentAmount: total);
     return true;
@@ -771,8 +539,14 @@ class AppState extends ChangeNotifier {
   /// seletor "Planificación" no formulário de transação (D), para que o
   /// usuário sempre possa vincular a transação a um plan já existente.
   List<BudgetItem> budgetsForMonth(YearMonth ym) {
-    return _budgets.where((b) => b.year == ym.year && b.month == ym.month).toList()
-      ..sort((a, b) => '${a.category}${a.subcategory}'.compareTo('${b.category}${b.subcategory}'));
+    return _budgets
+        .where((b) => b.year == ym.year && b.month == ym.month)
+        .toList()
+      ..sort(
+        (a, b) => '${a.category}${a.subcategory}'.compareTo(
+          '${b.category}${b.subcategory}',
+        ),
+      );
   }
 
   /// Busca (ou cria) o item de planejamento genérico "Otros" de um mês —
@@ -841,6 +615,76 @@ class AppState extends ChangeNotifier {
   /// de Estado para decidir o que ainda está pendente de pago.
   bool isBudgetItemCovered(BudgetItem b) =>
       b.planned > 0 && realizadoForBudgetItem(b) >= b.planned - 0.01;
+
+  /// Cantidad de transacciones vinculadas a un ítem de planificación —
+  /// misma lógica de coincidencia que [realizadoForBudgetItem] (vínculo
+  /// explícito o fallback por categoría+subcategoría+mes), pero contando
+  /// registros en vez de sumar montos. Usado en las nuevas tarjetas de
+  /// Planificación para mostrar "N transacciones".
+  int txnCountForBudgetItem(BudgetItem b) {
+    final ym = YearMonth(b.year, b.month);
+    return _txns.where((t) {
+      if (YearMonth(t.year, t.month) != ym) return false;
+      if (t.budgetItemId == b.id) return true;
+      if (b.linkedDebtId != null && t.debtId == b.linkedDebtId) return true;
+      if (b.linkedGoalId != null && t.goalId == b.linkedGoalId) return true;
+      if (t.budgetItemId == null &&
+          t.debtId == null &&
+          t.goalId == null &&
+          t.category == b.category &&
+          t.subcategory == b.subcategory) {
+        return true;
+      }
+      return false;
+    }).length;
+  }
+
+  /// Cantidad de aportes (excluye rescates) vinculados a un objetivo de
+  /// inversión — usado en la tarjeta de Objetivo para mostrar "N aportes".
+  int txnCountForGoal(String goalId) =>
+      _txns.where((t) => t.goalId == goalId && !t.isWithdrawal).length;
+
+  /// Lista completa (más reciente primero) de las transacciones vinculadas
+  /// a un ítem de planificación — misma lógica de coincidencia que
+  /// [realizadoForBudgetItem]/[txnCountForBudgetItem]. Usada para mostrar
+  /// el historial de movimientos dentro de la tarjeta expandida.
+  List<Txn> txnsForBudgetItem(BudgetItem b) {
+    final ym = YearMonth(b.year, b.month);
+    final list = _txns.where((t) {
+      if (YearMonth(t.year, t.month) != ym) return false;
+      if (t.budgetItemId == b.id) return true;
+      if (b.linkedDebtId != null && t.debtId == b.linkedDebtId) return true;
+      if (b.linkedGoalId != null && t.goalId == b.linkedGoalId) return true;
+      if (t.budgetItemId == null &&
+          t.debtId == null &&
+          t.goalId == null &&
+          t.category == b.category &&
+          t.subcategory == b.subcategory) {
+        return true;
+      }
+      return false;
+    }).toList();
+    list.sort((a, b) => b.date.compareTo(a.date));
+    return list;
+  }
+
+  /// Lista completa (más reciente primero) de los pagos vinculados a una
+  /// deuda — usada para mostrar el historial de pagos dentro de la tarjeta
+  /// expandida de Deuda.
+  List<Txn> txnsForDebt(String debtId) {
+    final list = _txns.where((t) => t.debtId == debtId).toList();
+    list.sort((a, b) => b.date.compareTo(a.date));
+    return list;
+  }
+
+  /// Lista completa (más reciente primero) de aportes/rescates vinculados
+  /// a un objetivo de inversión — usada para mostrar el historial dentro
+  /// de la tarjeta expandida de Objetivo.
+  List<Txn> txnsForGoal(String goalId) {
+    final list = _txns.where((t) => t.goalId == goalId).toList();
+    list.sort((a, b) => b.date.compareTo(a.date));
+    return list;
+  }
 
   // ---------------- Orçamentos (Planificación) CRUD ----------------
   Future<void> addBudget(BudgetItem item) async {
@@ -926,7 +770,6 @@ class AppState extends ChangeNotifier {
               priority: b.priority,
               status: TxStatus.pendiente,
               description: b.description,
-              method: b.method,
               dueDate: b.dueDate != null
                   ? DateTime(to.year, to.month, b.dueDate!.day)
                   : null,
@@ -940,6 +783,102 @@ class AppState extends ChangeNotifier {
       }
     }
     await _persistBudgets();
+    notifyListeners();
+  }
+
+  /// Replica um conjunto ESPECÍFICO de itens de planejamento (por id) para
+  /// os meses de destino informados — usado pela seleção múltipla da tela
+  /// de Planificación, quando o usuário quer replicar só alguns itens (não
+  /// o mês inteiro, como faz [replicateBudgetToMany]). Cada item gera um
+  /// novo registro independente (novo id) por mês de destino; nunca copia
+  /// dívidas/objetivos vinculados (esses geram seus próprios itens
+  /// automaticamente).
+  Future<int> replicateBudgetItemsToMany({
+    required List<String> budgetIds,
+    required List<YearMonth> targets,
+  }) async {
+    final source = _budgets
+        .where(
+          (b) =>
+              budgetIds.contains(b.id) &&
+              !b.isDebtInstallment &&
+              !b.isGoalContribution,
+        )
+        .toList();
+    var created = 0;
+    for (final to in targets) {
+      for (final b in source) {
+        final exists = _budgets.any(
+          (x) =>
+              x.year == to.year &&
+              x.month == to.month &&
+              x.category == b.category &&
+              x.subcategory == b.subcategory &&
+              x.country == b.country,
+        );
+        if (!exists) {
+          _budgets.add(
+            BudgetItem(
+              id: _uuid.v4(),
+              month: to.month,
+              year: to.year,
+              category: b.category,
+              subcategory: b.subcategory,
+              country: b.country,
+              planned: b.planned,
+              priority: b.priority,
+              status: TxStatus.pendiente,
+              description: b.description,
+              dueDate: b.dueDate != null
+                  ? DateTime(to.year, to.month, b.dueDate!.day)
+                  : null,
+            ),
+          );
+          created++;
+        }
+      }
+    }
+    if (created > 0) {
+      await _persistBudgets();
+      notifyListeners();
+    }
+    return created;
+  }
+
+  /// Quantas transações ficarão marcadas como "pendentes de planificación"
+  /// se os itens [budgetIds] forem excluídos — usado para mostrar a
+  /// confirmação de exclusão em massa ANTES de executar, sem nunca apagar
+  /// nada silenciosamente (mesma regra do [deleteBudget] individual).
+  int countTxnsAffectedByBudgetDeletion(List<String> budgetIds) {
+    final idSet = budgetIds.toSet();
+    return _txns
+        .where((t) => t.budgetItemId != null && idSet.contains(t.budgetItemId))
+        .length;
+  }
+
+  /// Exclui em massa um conjunto de itens de planejamento (Gasto normal,
+  /// não Deuda/Objetivo — esses são excluídos individualmente pelas suas
+  /// próprias telas). Segue exatamente a mesma regra do [deleteBudget]
+  /// individual: NUNCA apaga transações, apenas desvincula e marca
+  /// [Txn.needsPlanificacionLink] = true para reorganização posterior.
+  Future<void> deleteBudgetsBulk(List<String> budgetIds) async {
+    final idSet = budgetIds.toSet();
+    _budgets.removeWhere((b) => idSet.contains(b.id));
+    for (var i = 0; i < _txns.length; i++) {
+      final t = _txns[i];
+      if (t.budgetItemId != null && idSet.contains(t.budgetItemId)) {
+        _txns[i] = t.copyWith(
+          clearBudgetItemId: true,
+          needsPlanificacionLink: true,
+        );
+      }
+    }
+    await _persistBudgets();
+    await _persistTxns();
+    assert(
+      validateFinancialIntegrity(),
+      'La eliminación en masa de planificaciones violó la integridad financiera',
+    );
     notifyListeners();
   }
 
@@ -1056,7 +995,9 @@ class AppState extends ChangeNotifier {
       final ym = YearMonth.fromDate(date);
       final exists = _budgets.any(
         (b) =>
-            b.year == ym.year && b.month == ym.month && b.linkedGoalId == goal.id,
+            b.year == ym.year &&
+            b.month == ym.month &&
+            b.linkedGoalId == goal.id,
       );
       if (!exists) {
         _budgets.add(
@@ -1232,10 +1173,8 @@ class AppState extends ChangeNotifier {
 
   int get pendingPlanificacionCount => txnsPendingPlanificacion.length;
 
-  double get pendingPlanificacionTotal => txnsPendingPlanificacion.fold(
-    0.0,
-    (s, t) => s + t.amount,
-  );
+  double get pendingPlanificacionTotal =>
+      txnsPendingPlanificacion.fold(0.0, (s, t) => s + t.amount);
 
   bool get hasPendingPlanificacion => txnsPendingPlanificacion.isNotEmpty;
 
@@ -1258,7 +1197,9 @@ class AppState extends ChangeNotifier {
       final ym = YearMonth.fromDate(date);
       final exists = _budgets.any(
         (b) =>
-            b.year == ym.year && b.month == ym.month && b.linkedDebtId == debt.id,
+            b.year == ym.year &&
+            b.month == ym.month &&
+            b.linkedDebtId == debt.id,
       );
       if (!exists) {
         _budgets.add(
@@ -1518,23 +1459,20 @@ class AppState extends ChangeNotifier {
 
   /// Total interno (nunca mostrado directamente en la UI) usado solo para
   /// validar la ecuación fundamental: Gasto Total = Gastos + Inversiones.
-  double get _gastoTotalHistorico =>
-      totalGastosHistorico + inversionesActuales;
+  double get _gastoTotalHistorico => totalGastosHistorico + inversionesActuales;
 
   /// KPI Ingreso disponible: única fuente de dinero libre para gastar o
   /// aportar. Aumenta con cada Ingreso o Rescate; disminuye con cada Gasto
   /// o Aporte. Calculado como ESTADO acumulado (histórico completo), no
   /// como suma filtrada por período — así nunca se "pierde" el efecto de
   /// un aporte/rescate hecho en un mes fuera del filtro actual.
-  double get ingresoDisponible =>
-      totalIngresosHistorico - _gastoTotalHistorico;
+  double get ingresoDisponible => totalIngresosHistorico - _gastoTotalHistorico;
 
   /// Verifica que la ecuación fundamental de conservación de capital se
   /// mantenga siempre: ningún dólar puede desaparecer ni estar en dos
   /// estados a la vez. Devuelve `true` si todo está consistente.
   bool validateFinancialIntegrity({double epsilon = 0.01}) {
-    final suma =
-        ingresoDisponible + totalGastosHistorico + inversionesActuales;
+    final suma = ingresoDisponible + totalGastosHistorico + inversionesActuales;
     return (suma - totalIngresosHistorico).abs() <= epsilon;
   }
 
@@ -1605,6 +1543,151 @@ class AppState extends ChangeNotifier {
   bool get investmentGoalExceeded =>
       investmentGoalPlannedSelected > 0 &&
       totalInversiones > investmentGoalPlannedSelected + 0.01;
+
+  // ============================================================
+  // ============= 4 KPIs DEL DASHBOARD (Disponible / Gastos /
+  // ============= Objetivos / Deudas) =============
+  // ============================================================
+  // Estos getters DESAGREGAN visualmente lo que [totalGastosHistorico] ya
+  // hacía (Gasto + Deuda sumados) en dos KPIs independientes, y renombran
+  // [inversionesActuales] como "Objetivos" (ya que, en la práctica, TODO
+  // TxType.inversion está siempre vinculado a un goalId — no existe
+  // "inversión libre" sin objetivo, ver contributeToGoal/withdrawFromGoal).
+  // No se introduce ningún cálculo nuevo de dinero: es la misma ecuación
+  // fundamental (ingresoDisponible + totalGastosHistorico + inversionesActuales
+  // == totalIngresosHistorico), solo que totalGastosHistorico ahora se
+  // expone dividido en 2 números que siguen sumando exactamente lo mismo.
+  // Invariante: totalGastosPurosHistorico + totalDeudaHistorico ==
+  // totalGastosHistorico (siempre).
+
+  /// KPI Gastos (SOLO gasto normal, sin deuda ni objetivos) — histórico
+  /// completo, igual criterio que [totalGastosHistorico].
+  double get totalGastosPurosHistorico => _allRealizedTxns
+      .where((t) => t.type == TxType.gasto)
+      .fold(0.0, (s, t) => s + t.amount);
+
+  /// KPI Deudas (SOLO cuotas de deuda pagadas) — histórico completo.
+  double get totalDeudaHistorico => _allRealizedTxns
+      .where((t) => t.type == TxType.deuda)
+      .fold(0.0, (s, t) => s + t.amount);
+
+  /// KPI Objetivos: alias semántico de [inversionesActuales] — mismo
+  /// valor, nombre alineado con el concepto de producto ("Objetivos").
+  double get objetivosActuales => inversionesActuales;
+
+  // ============================================================
+  // ============= NUEVA LÓGICA DE KPIs (dashboard Resumen) =====
+  // ============================================================
+  // A partir de esta versión, los 4 KPIs del dashboard se dividen en dos
+  // categorías claramente distintas:
+  //
+  // 1) INDICADORES DE FLUJO (dependen del período seleccionado):
+  //    - Ingresos del período  -> [totalIngresos] (ya existía, filtrado por
+  //      selectedPeriods).
+  //    - Gastos del período    -> [totalGastosPurosSelected] (NUEVO: antes
+  //      el card "Gastos" usaba totalGastosPurosHistorico, que es histórico
+  //      completo; ahora refleja solo el período filtrado).
+  //
+  // 2) INDICADORES DE SITUACIÓN FINANCIERA ACTUAL (NO dependen del período):
+  //    - Saldo Disponible -> [ingresoDisponible] (ya era histórico, sin
+  //      cambios).
+  //    - Objetivos actuales -> [objetivosActuales] (ya era histórico, sin
+  //      cambios).
+  //    - Deudas: saldo PENDIENTE actual -> [totalDeudaPendiente] (NUEVO:
+  //      antes el card "Deudas" mostraba totalDeudaHistorico, que es la
+  //      suma de cuotas YA PAGADAS -- un concepto de flujo acumulado. El
+  //      nuevo requisito pide el saldo actual de la deuda, es decir, cuánto
+  //      se debe TODAVÍA -- suma de Debt.remainingAmount de todas las
+  //      deudas activas).
+  //
+  // Los filtros avanzados NUNCA afectan ninguno de estos getters -- solo
+  // filtran listas/gráficos/análisis detallados en sus propias pantallas.
+  // ============================================================
+
+  /// Gastos puros (SOLO TxType.gasto, sin deuda ni objetivos) del período
+  /// seleccionado — KPI de FLUJO, cambia con el filtro global de período.
+  double get totalGastosPurosSelected => totalByType(TxType.gasto);
+
+  /// Saldo PENDIENTE de todas las deudas activas (cuánto se debe todavía)
+  /// — KPI de SITUACIÓN FINANCIERA, NO depende del período seleccionado.
+  double get totalDeudaPendiente =>
+      _debts.fold(0.0, (s, d) => s + d.remainingAmount);
+
+  // -------- Progreso ABSOLUTO de Objetivos y Deudas (barras de KPI) ------
+  // Estas barras de progreso comparan el TOTAL de la meta/deuda contra lo
+  // YA pagado/aportado en TODA la historia -- son KPIs de SITUACIÓN
+  // FINANCIERA (igual que su tarjeta), por lo que NUNCA deben depender del
+  // filtro global de período ni de filtros avanzados. Ej.: si un objetivo
+  // tiene meta de $1000 y ya se aportaron $500, la barra siempre muestra
+  // 500/1000 sin importar qué mes/período esté seleccionado.
+
+  /// Meta TOTAL de todos los objetivos (suma de targetAmount) — absoluto.
+  double get goalsTargetTotalAbs =>
+      _goals.fold(0.0, (s, g) => s + g.targetAmount);
+
+  /// Progreso absoluto de Objetivos: aportado total / meta total.
+  double get goalsProgressRatioAbs {
+    final target = goalsTargetTotalAbs;
+    if (target <= 0) return 0;
+    return objetivosActuales / target;
+  }
+
+  bool get goalsCompletedAbs =>
+      goalsTargetTotalAbs > 0 &&
+      objetivosActuales >= goalsTargetTotalAbs - 0.01;
+  bool get goalsExceededAbs =>
+      goalsTargetTotalAbs > 0 && objetivosActuales > goalsTargetTotalAbs + 0.01;
+
+  /// Monto TOTAL de todas las deudas (suma de totalAmount) — absoluto.
+  double get debtsTotalAmountAbs =>
+      _debts.fold(0.0, (s, d) => s + d.totalAmount);
+
+  /// Total YA pagado de todas las deudas (suma de paidAmount) — absoluto.
+  double get debtsPaidAmountAbs => _debts.fold(0.0, (s, d) => s + d.paidAmount);
+
+  /// Progreso absoluto de Deudas: pagado total / monto total de deuda.
+  double get debtsProgressRatioAbs {
+    final total = debtsTotalAmountAbs;
+    if (total <= 0) return 0;
+    return debtsPaidAmountAbs / total;
+  }
+
+  /// Planificado de Gasto puro (excluye deuda y objetivos) en el período
+  /// seleccionado — usado para la barra de progreso del KPI Gastos.
+  double get plannedGastosPurosSelected {
+    return _budgets
+        .where(
+          (b) =>
+              selectedPeriods.contains(YearMonth(b.year, b.month)) &&
+              !b.isGoalContribution &&
+              !b.isDebtInstallment,
+        )
+        .fold(0.0, (s, b) => s + b.planned);
+  }
+
+  /// Planificado de cuotas de Deuda en el período seleccionado — usado
+  /// para la barra de progreso del KPI Deudas.
+  double get plannedDeudaSelected {
+    return _budgets
+        .where(
+          (b) =>
+              selectedPeriods.contains(YearMonth(b.year, b.month)) &&
+              b.isDebtInstallment,
+        )
+        .fold(0.0, (s, b) => s + b.planned);
+  }
+
+  double get gastosPurosExecutedRatio {
+    final planned = plannedGastosPurosSelected;
+    if (planned <= 0) return 0;
+    return totalByType(TxType.gasto) / planned;
+  }
+
+  double get deudaExecutedRatio {
+    final planned = plannedDeudaSelected;
+    if (planned <= 0) return 0;
+    return totalByType(TxType.deuda) / planned;
+  }
 
   /// Balanço de um mês específico (usado para cálculo de rollover de déficit).
   /// Rescates de inversión (isWithdrawal=true) suman al saldo disponible
@@ -1718,12 +1801,18 @@ class AppState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Borra TODOS los datos del usuario (transacciones, planificación,
+  /// objetivos, deudas) y reinicia el app al estado vacío de fábrica
+  /// (solo con la taxonomía base de categorías/países). NO reintroduce
+  /// ningún dato de ejemplo/demostración.
   Future<void> resetToSeed() async {
     await storage.clearAll();
     await storage.init();
     await _seed();
     _loadFromStorage();
-    _selectedRange = PeriodRange.singleMonth(YearMonth(SeedData.seedYear, 12));
+    _selectedRange = PeriodRange.singleMonth(
+      YearMonth.fromDate(DateTime.now()),
+    );
     notifyListeners();
   }
 

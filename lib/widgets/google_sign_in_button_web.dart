@@ -5,35 +5,23 @@ import 'package:google_identity_services_web/id.dart' as gis_id;
 import 'package:provider/provider.dart';
 import 'package:web/web.dart' as web;
 
-import '../state/app_state.dart';
+import '../services/auth_service.dart';
 
 /// Versión Web: el SDK de Google Identity Services exige que el
 /// inicio de sesión se haga mediante un botón renderizado por el
 /// propio SDK (no se puede disparar `authenticate()` manualmente en
-/// Web). El resultado del login llega igualmente a través del stream
-/// `GoogleAuthService`/`authenticationEvents`, escuchado en
-/// `GoogleAuthService`.
+/// Web). El resultado del login llega vía `onAuthStateChange` de
+/// Supabase, ya escuchado internamente por [AuthService].
 ///
 /// IMPORTANTE — por qué esta implementación NO usa
-/// `google_sign_in_web`'s `web_only.dart` `renderButton()`:
-/// Esa función delega en `FlexHtmlElementView`, que usa un
-/// `MutationObserver` para detectar el tamaño del botón inyectado por
-/// Google y hace `elements.item(0) as web.Element?` sobre el primer
-/// nodo añadido al DOM. Cuando Google inyecta primero un nodo que no
-/// es un `Element` (p. ej. un nodo de texto/comentario, algo que
-/// ocurre con el flujo FedCM más reciente del SDK real de Google),
-/// ese cast de JS-interop falla con:
-///   TypeError: type 'minified:aAZ' is not a subtype of type 'minified:bb9'
-/// Esto es un bug conocido del paquete `google_sign_in_web` 1.1.3
-/// (ver flutter/flutter#149236) y ocurre incluso pasando una
-/// `GSIButtonConfiguration` explícita, porque el problema está en la
-/// detección de tamaño, no en la configuración del botón.
-///
-/// La solución es evitar `FlexHtmlElementView` por completo y llamar
-/// directamente a `google.accounts.id.renderButton(...)` (vía
-/// `google_identity_services_web`, la capa de JS-interop de más bajo
-/// nivel) sobre un `<div>` de tamaño fijo que registramos nosotros
-/// mismos como platform view.
+/// `google_sign_in_web`'s `renderButton()`: ese helper delega en
+/// `FlexHtmlElementView`, que falla con un `TypeError` de
+/// JS-interop cuando Google inyecta primero un nodo que no es un
+/// `Element` (bug conocido de `google_sign_in_web` 1.1.3, ver
+/// flutter/flutter#149236). La solución es llamar directamente a
+/// `google.accounts.id.renderButton(...)` (vía
+/// `google_identity_services_web`) sobre un `<div>` que registramos
+/// nosotros mismos como platform view.
 const String _gsiButtonViewType = 'prospera_gsi_button';
 bool _gsiButtonViewFactoryRegistered = false;
 
@@ -70,6 +58,7 @@ class _GoogleSignInButtonState extends State<GoogleSignInButton> {
   void initState() {
     super.initState();
     _ensureViewFactoryRegistered();
+    context.read<AuthService>().prepareGoogleSignIn();
   }
 
   void _renderIntoElement(web.Element element) {
@@ -90,16 +79,15 @@ class _GoogleSignInButtonState extends State<GoogleSignInButton> {
       _rendered = true;
     } catch (e) {
       // Si falla, se reintentará en el próximo build (p. ej. cuando
-      // `isInitialized` cambie de false a true).
+      // `googleReady` cambie de false a true).
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final state = context.watch<AppState>();
-    final initialized = state.googleAuth.isInitialized;
+    final auth = context.watch<AuthService>();
 
-    if (!initialized) {
+    if (!auth.googleReady) {
       return const SizedBox(
         height: 44,
         width: 240,
