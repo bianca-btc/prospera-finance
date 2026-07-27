@@ -9,6 +9,12 @@ FLUTTER_VERSION="3.35.4"
 FLUTTER_DIR="$HOME/flutter"
 ARCHIVE_URL="https://storage.googleapis.com/flutter_infra_release/releases/stable/linux/flutter_linux_${FLUTTER_VERSION}-stable.tar.xz"
 
+# El Flutter SDK (extraído) es un repo git cuyo dueño (uid del build de
+# Vercel) puede no coincidir con quien lo creó, y git rechaza operar en
+# él por seguridad ("dubious ownership"). Se marca como "safe" de
+# antemano (comodín "*" cubre también el checkout del propio proyecto).
+git config --global --add safe.directory '*'
+
 if [ ! -x "$FLUTTER_DIR/bin/flutter" ]; then
   echo "==> Descargando Flutter SDK $FLUTTER_VERSION..."
   curl -sSL "$ARCHIVE_URL" -o /tmp/flutter.tar.xz
