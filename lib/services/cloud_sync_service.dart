@@ -21,6 +21,14 @@ class CloudSyncService {
   CloudSyncService({required this.auth, required this.appState}) {
     auth.addListener(_onAuthChanged);
     appState.addListener(_onAppStateChanged);
+    // El listener `_onAuthChanged` solo reacciona a cambios FUTUROS de
+    // sesión. Si el usuario ya estaba logueado en el momento en que este
+    // servicio se crea (ej.: sesión de Supabase restaurada desde el
+    // storage del navegador al recargar la página), hay que disparar la
+    // descarga inicial manualmente aquí — de lo contrario, esa sesión ya
+    // activa nunca gatilla `downloadNow()` y los datos remotos jamás se
+    // traen.
+    _onAuthChanged();
   }
 
   sb.SupabaseClient get _client => sb.Supabase.instance.client;

@@ -32,7 +32,18 @@ class ProsperaApp extends StatelessWidget {
           create: (_) => AppState(StorageService())..init(),
         ),
         ChangeNotifierProvider<AuthService>(create: (_) => AuthService()..init()),
+        // IMPORTANTE: `lazy: false` es OBLIGATORIO aquí. Por defecto,
+        // ProxyProvider solo instancia el valor la primera vez que algo
+        // lo lee con `context.read`/`watch` — pero ningún widget del
+        // árbol lee `CloudSyncService` directamente (solo se usa por
+        // sus efectos secundarios, vía listeners). Sin `lazy: false`,
+        // el servicio JAMÁS se creaba, sus listeners jamás se conectaban,
+        // y la sincronización automática con la nube nunca ocurría — la
+        // causa raíz de que los datos del usuario parecieran "perderse"
+        // en cada nuevo deployment (quedaban solo en el almacenamiento
+        // local del navegador, nunca subían a Supabase).
         ProxyProvider2<AuthService, AppState, CloudSyncService>(
+          lazy: false,
           update: (_, auth, appState, previous) =>
               previous ?? CloudSyncService(auth: auth, appState: appState),
           dispose: (_, service) => service.dispose(),
