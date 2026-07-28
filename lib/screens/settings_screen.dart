@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../services/auth_service.dart';
+import '../services/cloud_sync_service.dart';
 import '../services/export_import_service.dart';
 import '../state/app_state.dart';
 import '../theme/app_theme.dart';
@@ -162,9 +163,23 @@ class _AccountSection extends StatelessWidget {
     }
   }
 
+  String _formatSyncTime(DateTime? dt) {
+    if (dt == null) return 'nunca';
+    final now = DateTime.now();
+    final diff = now.difference(dt);
+    if (diff.inSeconds < 10) return 'ahora mismo';
+    if (diff.inMinutes < 1) return 'hace ${diff.inSeconds}s';
+    if (diff.inHours < 1) return 'hace ${diff.inMinutes} min';
+    if (diff.inDays < 1) return 'hace ${diff.inHours} h';
+    return '${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')} ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+  }
+
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthService>();
+    final sync = context.watch<CloudSyncService>();
+    final hasError = sync.lastError != null;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -182,6 +197,62 @@ class _AccountSection extends StatelessWidget {
             ),
             subtitle: Text(auth.currentUser!.email),
           ),
+        const Divider(height: 1),
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: Icon(
+            sync.isSyncing
+                ? Icons.sync_rounded
+                : hasError
+                    ? Icons.sync_problem_rounded
+                    : Icons.cloud_done_rounded,
+            color: sync.isSyncing
+                ? AppColors.brandAmber
+                : hasError
+                    ? AppColors.gasto
+                    : AppColors.ingreso,
+          ),
+          title: Text(
+            sync.isSyncing
+                ? 'Sincronizando...'
+                : hasError
+                    ? 'Error al sincronizar'
+                    : 'Copia de seguridad en la nube',
+          ),
+          subtitle: Text(
+            hasError && !sync.isSyncing
+                ? sync.lastError!
+                : 'Última sincronización: ${_formatSyncTime(sync.lastSyncedAt)}',
+            style: hasError && !sync.isSyncing
+                ? const TextStyle(color: AppColors.gasto)
+                : null,
+          ),
+          trailing: sync.isSyncing
+              ? const SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : IconButton(
+                  icon: const Icon(Icons.refresh_rounded),
+                  tooltip: 'Sincronizar ahora',
+                  onPressed: () async {
+                    await sync.uploadNow();
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                            sync.lastError != null
+                                ? 'Error: ${sync.lastError}'
+                                : 'Datos sincronizados correctamente',
+                          ),
+                        ),
+                      );
+                    }
+                  },
+                ),
+        ),
+        const Divider(height: 1),
         ListTile(
           contentPadding: EdgeInsets.zero,
           leading: const Icon(Icons.logout_rounded, color: AppColors.gasto),

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' as sb;
 
 import 'auth_service.dart';
@@ -14,13 +15,27 @@ import '../state/app_state.dart';
 /// Diseño intencionalmente simple (sin cola de sincronización, sin
 /// resolución de conflictos por campo): como no hay multi-usuario por
 /// cuenta, "last write wins" vía `upsert` es correcto y suficiente.
-class CloudSyncService {
+///
+/// También observa el ciclo de vida de la app ([WidgetsBindingObserver])
+/// para forzar un envío inmediato ([flushNow]) cuando la pestaña/app
+/// pasa a segundo plano o pierde el foco — sin esto, un cambio hecho
+/// justo antes de cerrar la pestaña podría quedar atrapado dentro de la
+/// ventana de debounce de 2s y nunca llegar a subirse.
+///
+/// Extiende [ChangeNotifier] para que la UI (ver [SettingsScreen]) pueda
+/// mostrar el estado real de la sincronización (última vez exitosa,
+/// error concreto si lo hay) — en build de release, los errores solo se
+/// logueaban con `debugPrint` bajo `kDebugMode` (nunca visible para el
+/// usuario ni para nosotros al diagnosticar a distancia), quedando la
+/// sincronización fallida de forma completamente silenciosa.
+class CloudSyncService extends ChangeNotifier with WidgetsBindingObserver {
   final AuthService auth;
   final AppState appState;
 
   CloudSyncService({required this.auth, required this.appState}) {
     auth.addListener(_onAuthChanged);
     appState.addListener(_onAppStateChanged);
+    WidgetsBinding.instance.addObserver(this);
     // El listener `_onAuthChanged` solo reacciona a cambios FUTUROS de
     // sesión. Si el usuario ya estaba logueado en el momento en que este
     // servicio se crea (ej.: sesión de Supabase restaurada desde el
@@ -29,6 +44,19 @@ class CloudSyncService {
     // activa nunca gatilla `downloadNow()` y los datos remotos jamás se
     // traen.
     _onAuthChanged();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // `inactive`/`hidden`/`paused` cubren tanto "app móvil va a segundo
+    // plano" como "pestaña web pierde el foco o va a cerrarse" — en
+    // cualquiera de esos casos, si hay cambios pendientes, se envían de
+    // inmediato en vez de esperar el debounce completo.
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.paused) {
+      unawaited(flushNow());
+    }
   }
 
   sb.SupabaseClient get _client => sb.Supabase.instance.client;
@@ -40,6 +68,7 @@ class CloudSyncService {
 
   bool get isSyncing => _syncing;
   String? lastError;
+  DateTime? lastSyncedAt;
 
   void _onAuthChanged() {
     final userId = auth.currentUser?.id;
@@ -58,10 +87,27 @@ class CloudSyncService {
       return;
     }
     if (!auth.isSignedIn) return;
+    _hasPendingChanges = true;
     _debounce?.cancel();
     _debounce = Timer(const Duration(seconds: 2), () {
       unawaited(uploadNow());
     });
+  }
+
+  /// Verdadero si hay cambios locales que todavía no llegaron a subirse
+  /// a Supabase (dentro de la ventana de debounce, o mientras un
+  /// `uploadNow()` está en curso). Se usa para forzar un envío
+  /// inmediato antes de que la pestaña/app se cierre (ver [flushNow]).
+  bool _hasPendingChanges = false;
+
+  /// Fuerza el envío inmediato del snapshot pendiente, saltando el
+  /// debounce de 2s. Debe llamarse cuando la app va a segundo plano o
+  /// la pestaña se va a cerrar — de lo contrario, un cambio hecho justo
+  /// antes de cerrar podría no llegar a subirse nunca.
+  Future<void> flushNow() async {
+    if (!_hasPendingChanges && !_syncing) return;
+    _debounce?.cancel();
+    await uploadNow();
   }
 
   /// Sube el snapshot local actual a Supabase (sobrescribe el remoto).
@@ -76,11 +122,14 @@ class CloudSyncService {
         'updated_at': DateTime.now().toIso8601String(),
       });
       lastError = null;
+      lastSyncedAt = DateTime.now();
+      _hasPendingChanges = false;
     } catch (e) {
       lastError = 'Error al sincronizar: $e';
       if (kDebugMode) debugPrint(lastError);
     } finally {
       _syncing = false;
+      notifyListeners();
     }
   }
 
@@ -105,17 +154,22 @@ class CloudSyncService {
         await uploadNow();
       }
       lastError = null;
+      lastSyncedAt = DateTime.now();
     } catch (e) {
       lastError = 'Error al descargar datos: $e';
       if (kDebugMode) debugPrint(lastError);
     } finally {
       _syncing = false;
+      notifyListeners();
     }
   }
 
+  @override
   void dispose() {
     _debounce?.cancel();
     auth.removeListener(_onAuthChanged);
     appState.removeListener(_onAppStateChanged);
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
   }
 }

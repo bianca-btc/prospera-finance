@@ -42,11 +42,21 @@ class ProsperaApp extends StatelessWidget {
         // causa raíz de que los datos del usuario parecieran "perderse"
         // en cada nuevo deployment (quedaban solo en el almacenamiento
         // local del navegador, nunca subían a Supabase).
-        ProxyProvider2<AuthService, AppState, CloudSyncService>(
+        // `CloudSyncService` ahora extiende `ChangeNotifier` (para que la
+        // UI de Ajustes pueda mostrar el estado real de sincronización),
+        // por lo que se usa `ChangeNotifierProxyProvider2` en vez de
+        // `ProxyProvider2` — mantiene el mismo `lazy: false` obligatorio.
+        // `create` se ejecuta una única vez (antes que `update`), y ya
+        // tiene acceso a `AuthService`/`AppState` vía `context.read`
+        // porque ambos fueron registrados antes en este mismo
+        // `MultiProvider`; `update` simplemente conserva la instancia.
+        ChangeNotifierProxyProvider2<AuthService, AppState, CloudSyncService>(
           lazy: false,
-          update: (_, auth, appState, previous) =>
-              previous ?? CloudSyncService(auth: auth, appState: appState),
-          dispose: (_, service) => service.dispose(),
+          create: (context) => CloudSyncService(
+            auth: context.read<AuthService>(),
+            appState: context.read<AppState>(),
+          ),
+          update: (_, auth, appState, previous) => previous!,
         ),
       ],
       child: Consumer2<AppState, AuthService>(
